@@ -116,11 +116,15 @@ export class FollowUpsService {
       actor: actorId ?? 'system',
     });
 
+    const now = new Date();
+    const isContactedOutcome = ['CONNECTED', 'INTERESTED', 'CALLBACK_REQUESTED', 'CONVERTED'].includes(input.outcome);
+
     const updateData: Parameters<typeof followUpsRepository.update>[1] = {
       interactions: JSON.stringify(existing) as unknown as Prisma.InputJsonValue,
       history: JSON.stringify(history) as unknown as Prisma.InputJsonValue,
       callAttempts: followUp.callAttempts + (input.type === 'CALL' ? 1 : 0),
-      lastActivityAt: new Date(),
+      lastActivityAt: now,
+      ...(isContactedOutcome ? { lastContactAt: now } : {}),
     };
 
     if (input.nextFollowUpAt) {

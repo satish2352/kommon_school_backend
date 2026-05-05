@@ -3,6 +3,8 @@ import { asyncHandler } from '@/utils/asyncHandler';
 import { ApiResponse, parsePagination } from '@/utils/ApiResponse';
 import { ApiError } from '@/utils/ApiError';
 import { enrollmentsService } from './enrollments.service';
+import { paymentsService } from '../payments/payments.service';
+import { env } from '@/config/env';
 import type { CreateEnrollmentInput, ListEnrollmentsQuery } from './enrollments.schema';
 
 /**
@@ -58,4 +60,56 @@ export const getEnrollment = asyncHandler(async (req: Request, res: Response): P
 
   const enrollment = await enrollmentsService.getEnrollment(id);
   ApiResponse.success(res, enrollment);
+});
+
+/**
+ * POST /api/v1/enrollments/:id/payment-order
+ * Public — used by the marketing flow right after enrollment to get a Razorpay order.
+ * Amount is read from env so ops can change pricing without a code deploy.
+ */
+export const createPaymentOrderForEnrollment = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const id = req.params['id'];
+  if (!id) throw ApiError.badRequest('Enrollment ID is required');
+
+  const enrollment = await enrollmentsService.getEnrollment(id);
+
+  const result = await paymentsService.createOrder(
+    {
+      enrollmentId: enrollment.id,
+      amount: env.ENROLLMENT_FEE_PAISE,
+      currency: env.ENROLLMENT_FEE_CURRENCY,
+      idempotencyKey: (req.body?.idempotencyKey as string | undefined),
+    },
+    enrollment.tenantId ?? null,
+  );
+
+  ApiResponse.success(
+    res,
+    {
+      paymentId: result.payment.id,
+      razorpayOrderId: result.razorpayOrder?.id ?? result.payment.razorpayOrderId,
+      amount: env.ENROLLMENT_FEE_PAISE,
+      currency: env.ENROLLMENT_FEE_CURRENCY,
+      keyId: env.RAZORPAY_KEY_ID,
+      enrollmentId: enrollment.enrollmentId,
+    },
+    'Payment order ready',
+  );
+});
+
+/**
+ * POST /api/v1/enrollments/:id/payment-verify
+ * Public — Razorpay signature is the gate, not auth.
+ */
+export const verifyPaymentForEnrollment = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const id = req.params['id'];
+  if (!id) throw ApiError.badRequest('Enrollment ID is required');
+
+  const enrollment = await enrollmentsService.getEnrollment(id);
+
+  const result = await paymentsService.verifyPayment(
+    req.body,
+    enrollment.tenantId ?? null,
+  );
+  ApiResponse.success(res, result, 'Payment verified');
 });

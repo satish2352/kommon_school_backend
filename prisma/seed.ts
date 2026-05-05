@@ -8,19 +8,22 @@ async function main(): Promise<void> {
 
   // ── Super Admin (no tenant) ──────────────────────────────
   const superAdminPasswordHash = await bcrypt.hash('SuperAdmin@123', 12);
-  const superAdmin = await prisma.user.upsert({
-    where: { email_tenantId: { email: 'superadmin@kommon.school', tenantId: null as unknown as string } },
-    update: {},
-    create: {
-      email: 'superadmin@kommon.school',
-      passwordHash: superAdminPasswordHash,
-      firstName: 'Super',
-      lastName: 'Admin',
-      role: UserRole.SUPER_ADMIN,
-      isEmailVerified: true,
-      isActive: true,
-    },
+  const existingSuperAdmin = await prisma.user.findFirst({
+    where: { email: 'superadmin@kommon.school', tenantId: null },
   });
+  const superAdmin =
+    existingSuperAdmin ??
+    (await prisma.user.create({
+      data: {
+        email: 'superadmin@kommon.school',
+        passwordHash: superAdminPasswordHash,
+        firstName: 'Super',
+        lastName: 'Admin',
+        role: UserRole.SUPER_ADMIN,
+        isEmailVerified: true,
+        isActive: true,
+      },
+    }));
   console.log('Super admin created:', superAdmin.email);
 
   // ── Demo Tenant (School) ─────────────────────────────────

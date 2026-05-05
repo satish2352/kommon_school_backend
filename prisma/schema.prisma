@@ -143,6 +143,8 @@ enum InteractionType {
 enum InteractionOutcome {
   CONNECTED
   NOT_CONNECTED
+  NOT_REACHABLE
+  SWITCHED_OFF
   BUSY
   WRONG_NUMBER
   VOICEMAIL
@@ -574,6 +576,7 @@ model FollowUp {
   // Tracking
   nextFollowUpAt  DateTime?
   lastActivityAt  DateTime?
+  lastContactAt   DateTime?        // last successful contact (CALL/WHATSAPP/EMAIL with CONNECTED-class outcome)
   convertedAt     DateTime?
   closedAt        DateTime?
   dueAt           DateTime?        // set by reminder cron

@@ -108,6 +108,10 @@ const envSchema = z.object({
   PAYMENT_TIMEOUT_MIN: z.string().default('15').transform(Number),
   // Maximum retries for payment reconciliation
   MAX_RETRY: z.string().default('3').transform(Number),
+  // Default enrollment fee charged on the public marketing flow.
+  // Razorpay expects amounts in the smallest currency unit (paise for INR).
+  ENROLLMENT_FEE_PAISE: z.string().default('50000').transform(Number),
+  ENROLLMENT_FEE_CURRENCY: z.string().length(3).default('INR'),
 
   // ── External API ──────────────────────────────────────────
   // Maximum retries for external API calls
