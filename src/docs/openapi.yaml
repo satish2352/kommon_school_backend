@@ -1,0 +1,1230 @@
+openapi: 3.0.3
+info:
+  title: Kommon School API
+  version: 1.0.0
+  description: |
+    Student enrollment and Razorpay payment platform backend.
+    All protected endpoints require a JWT Bearer token obtained from POST /api/v1/auth/login.
+    Response envelopes: success { success: true, data, meta?, message? }
+    and error { success: false, error: { code, message, details? }, traceId }.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: https://api.example.com
+    description: Production (replace with actual domain)
+
+security: []
+
+tags:
+  - name: Auth
+    description: Authentication and session management
+  - name: Enrollments
+    description: Student enrollment lifecycle
+  - name: Payments
+    description: Razorpay order creation, verification, and retry
+  - name: Webhooks
+    description: Razorpay event ingestion (signature-gated)
+  - name: Followups
+    description: Marketing follow-up lifecycle for failed enrollments
+  - name: AdminUsers
+    description: Superadmin user management
+  - name: AdminRazorpayConfigs
+    description: Superadmin Razorpay configuration management
+  - name: AdminExternalApiLogs
+    description: Admin read-only external API sync log viewer
+  - name: AuditLogs
+    description: Immutable privileged-action audit trail
+  - name: Reports
+    description: Aggregated analytics and CSV export
+  - name: Health
+    description: Liveness and readiness probes
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  uptime: { type: number }
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe (DB ping)
+      responses:
+        '200':
+          description: Database is reachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ready }
+        '503':
+          description: Database unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  # ---------------------------------------------------------------------------
+  # Auth
+  # ---------------------------------------------------------------------------
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate and receive tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken: { type: string }
+                          refreshToken: { type: string }
+                          user: { $ref: '#/components/schemas/User' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate refresh token and issue new access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken: { type: string }
+                          refreshToken: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke refresh token
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Return the authenticated user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Enrollments
+  # ---------------------------------------------------------------------------
+  /api/v1/enrollments:
+    post:
+      tags: [Enrollments]
+      summary: Submit a new enrollment (public)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name, email, phone, plan]
+              properties:
+                first_name: { type: string, maxLength: 100 }
+                last_name:  { type: string, maxLength: 100 }
+                email:      { type: string, format: email }
+                phone:      { type: string, maxLength: 20 }
+                plan:       { type: string, maxLength: 100 }
+      responses:
+        '201':
+          description: Enrollment created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Enrollment' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+    get:
+      tags: [Enrollments]
+      summary: List enrollments (paginated)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: sortBy
+          in: query
+          schema: { type: string, enum: [created_at, updated_at, status] }
+        - name: sortOrder
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated enrollment list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Enrollment' }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/enrollments/{id}:
+    get:
+      tags: [Enrollments]
+      summary: Get a single enrollment by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Enrollment detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Enrollment' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Payments
+  # ---------------------------------------------------------------------------
+  /api/v1/payments/create-order:
+    post:
+      tags: [Payments]
+      summary: Create a Razorpay order for an enrollment (public)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollmentId]
+              properties:
+                enrollmentId: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Razorpay order created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Payment' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/payments/verify:
+    post:
+      tags: [Payments]
+      summary: Verify Razorpay payment signature and settle (public)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+              properties:
+                razorpay_order_id:   { type: string }
+                razorpay_payment_id: { type: string }
+                razorpay_signature:  { type: string }
+      responses:
+        '200':
+          description: Payment verified and settlement recorded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Payment' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/payments/by-enrollment/{enrollmentId}:
+    get:
+      tags: [Payments]
+      summary: Get payment(s) for an enrollment (public — frontend resume)
+      parameters:
+        - name: enrollmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payment records for the enrollment
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Payment' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/payments/{id}/retry:
+    post:
+      tags: [Payments]
+      summary: Retry a payment (requires payments:retry permission)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '201':
+          description: New Razorpay order created for retry
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Payment' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Webhooks
+  # ---------------------------------------------------------------------------
+  /api/v1/webhooks/razorpay:
+    post:
+      tags: [Webhooks]
+      summary: Receive Razorpay webhook events (HMAC-gated, raw body)
+      description: >
+        Razorpay signs the payload with the webhook secret. The server verifies
+        the X-Razorpay-Signature header before processing. Raw body is preserved
+        by nginx (proxy_request_buffering off). Idempotent on duplicate events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Razorpay webhook event payload
+      responses:
+        '200':
+          description: Event accepted
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  # ---------------------------------------------------------------------------
+  # Followups
+  # ---------------------------------------------------------------------------
+  /api/v1/followups:
+    get:
+      tags: [Followups]
+      summary: List follow-ups (marketing/admin/superadmin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: assignedTo
+          in: query
+          schema: { type: string, format: uuid }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Paginated follow-up list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Followup' }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/followups/{id}/timeline:
+    get:
+      tags: [Followups]
+      summary: Followup detail with synthesized timeline
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Followup with timeline entries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Followup' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/followups/{id}/notes:
+    post:
+      tags: [Followups]
+      summary: Append a note to a followup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:     { type: string, maxLength: 5000 }
+                metadata: { type: object }
+      responses:
+        '201':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/followups/{id}/status:
+    patch:
+      tags: [Followups]
+      summary: Transition followup status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - payment_pending
+                    - call_back_later
+                    - interested
+                    - not_interested
+                    - payment_completed
+                    - followup_closed
+                    - invalid_number
+                    - no_response
+                next_followup_date:
+                  type: string
+                  format: date
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/followups/{id}/retry-payment:
+    post:
+      tags: [Followups]
+      summary: Trigger a Razorpay payment retry from the follow-up context
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '201':
+          description: New Razorpay order for retry
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Payment' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Admin — Users
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/users:
+    post:
+      tags: [AdminUsers]
+      summary: Create a user (superadmin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, role]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                role:     { type: string, enum: [admin, marketing, superadmin] }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+    get:
+      tags: [AdminUsers]
+      summary: List users (superadmin, paginated)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: role, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, deleted] } }
+      responses:
+        '200':
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/User' }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/users/{id}:
+    get:
+      tags: [AdminUsers]
+      summary: Get a single user (superadmin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: User record (no password hash)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [AdminUsers]
+      summary: Update user role or password (superadmin, cannot self-modify)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:     { type: string, enum: [admin, marketing, superadmin] }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+    delete:
+      tags: [AdminUsers]
+      summary: Soft-delete a user (superadmin, cannot self-delete)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # ---------------------------------------------------------------------------
+  # Admin — Razorpay Configurations
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/razorpay-configs:
+    post:
+      tags: [AdminRazorpayConfigs]
+      summary: Create a Razorpay configuration (superadmin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key_id, key_secret, webhook_secret]
+              properties:
+                key_id:         { type: string }
+                key_secret:     { type: string }
+                webhook_secret: { type: string }
+      responses:
+        '201':
+          description: Configuration created (secrets stored encrypted)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/RazorpayConfiguration' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags: [AdminRazorpayConfigs]
+      summary: List Razorpay configurations (secrets masked)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Configuration list (secrets never returned)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/RazorpayConfiguration' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/admin/razorpay-configs/{id}:
+    get:
+      tags: [AdminRazorpayConfigs]
+      summary: Get a single Razorpay config (masked)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Configuration detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/RazorpayConfiguration' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [AdminRazorpayConfigs]
+      summary: Hard-delete a Razorpay config (cannot delete active)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/admin/razorpay-configs/{id}/activate:
+    patch:
+      tags: [AdminRazorpayConfigs]
+      summary: Atomically activate a config (deactivates all others)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Admin — External API Logs
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/external-api-logs:
+    get:
+      tags: [AdminExternalApiLogs]
+      summary: List external API sync logs (admin/superadmin, paginated)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: enrollmentId, in: query, schema: { type: string, format: uuid } }
+        - { name: dateFrom, in: query, schema: { type: string, format: date } }
+        - { name: dateTo, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Paginated log list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ExternalApiLog' }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/admin/external-api-logs/{id}:
+    get:
+      tags: [AdminExternalApiLogs]
+      summary: Get a single external API log with full request/response bodies
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      responses:
+        '200':
+          description: Log detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ExternalApiLog' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Audit Logs
+  # ---------------------------------------------------------------------------
+  /api/v1/audit-logs:
+    get:
+      tags: [AuditLogs]
+      summary: List audit events (admin/superadmin, paginated)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: entityType, in: query, schema: { type: string } }
+        - { name: entityId, in: query, schema: { type: string, format: uuid } }
+        - { name: actorId, in: query, schema: { type: string, format: uuid } }
+        - { name: dateFrom, in: query, schema: { type: string, format: date } }
+        - { name: dateTo, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Paginated audit log
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/AuditLog' }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Reports
+  # ---------------------------------------------------------------------------
+  /api/v1/reports/payments-summary:
+    get:
+      tags: [Reports]
+      summary: Aggregate payment counts and amounts by status
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: dateFrom, in: query, schema: { type: string, format: date } }
+        - { name: dateTo, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Payment aggregates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/reports/enrollments-funnel:
+    get:
+      tags: [Reports]
+      summary: Enrollment count per status stage
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: dateFrom, in: query, schema: { type: string, format: date } }
+        - { name: dateTo, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Funnel counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/reports/external-api-health:
+    get:
+      tags: [Reports]
+      summary: External API sync health metrics
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: dateFrom, in: query, schema: { type: string, format: date } }
+        - { name: dateTo, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Health metrics and recent dead-letter rows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/reports/export:
+    get:
+      tags: [Reports]
+      summary: Stream a CSV report
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema: { type: string, enum: [payments] }
+        - { name: format, in: query, schema: { type: string, enum: [csv], default: csv } }
+        - { name: dateFrom, in: query, schema: { type: string, format: date } }
+        - { name: dateTo, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: CSV file stream
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Success:
+      description: Operation succeeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiResponse' }
+
+    ValidationError:
+      description: Request body or query failed validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+    Forbidden:
+      description: Insufficient role or permission
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+    Conflict:
+      description: State conflict (duplicate, invalid transition, etc.)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+  schemas:
+
+    ApiResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, example: true }
+        data:    {}
+        message: { type: string }
+        meta:    { $ref: '#/components/schemas/PaginationMeta' }
+
+    ApiError:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:    { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details: {}
+        traceId: { type: string, format: uuid }
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:       { type: integer }
+        limit:      { type: integer }
+        total:      { type: integer }
+        totalPages: { type: integer }
+
+    User:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        email:      { type: string, format: email }
+        role:       { type: string, enum: [superadmin, admin, marketing] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+
+    Enrollment:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        first_name: { type: string }
+        last_name:  { type: string }
+        email:      { type: string, format: email }
+        phone:      { type: string }
+        plan:       { type: string }
+        status:
+          type: string
+          enum:
+            - submitted
+            - payment_pending
+            - payment_completed
+            - sync_pending
+            - completed
+            - failed
+            - expired
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Payment:
+      type: object
+      properties:
+        id:                  { type: string, format: uuid }
+        enrollment_id:       { type: string, format: uuid }
+        order_id:            { type: string }
+        razorpay_payment_id: { type: string, nullable: true }
+        razorpay_signature:  { type: string, nullable: true }
+        amount:              { type: integer, description: Amount in paise }
+        currency:            { type: string, example: INR }
+        status:
+          type: string
+          enum: [initiated, success, failed, expired]
+        created_at:          { type: string, format: date-time }
+        updated_at:          { type: string, format: date-time }
+
+    Followup:
+      type: object
+      properties:
+        id:                 { type: string, format: uuid }
+        enrollment_id:      { type: string, format: uuid }
+        assigned_to:        { type: string, format: uuid, nullable: true }
+        status:
+          type: string
+          enum:
+            - payment_pending
+            - call_back_later
+            - interested
+            - not_interested
+            - payment_completed
+            - followup_closed
+            - invalid_number
+            - no_response
+        next_followup_date: { type: string, format: date, nullable: true }
+        created_at:         { type: string, format: date-time }
+        updated_at:         { type: string, format: date-time }
+        deleted_at:         { type: string, format: date-time, nullable: true }
+
+    RazorpayConfiguration:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        key_id:     { type: string, description: Public key ID (not masked) }
+        is_active:  { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ExternalApiLog:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        enrollment_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [pending, retrying, success, failed, dead_letter]
+        attempts:      { type: integer }
+        status_code:   { type: integer, nullable: true }
+        error_message: { type: string, nullable: true }
+        duration_ms:   { type: integer, nullable: true }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+    AuditLog:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        actor_id:    { type: string, format: uuid, nullable: true }
+        action:      { type: string, example: user.create }
+        entity_type: { type: string, example: User }
+        entity_id:   { type: string, format: uuid, nullable: true }
+        ip:          { type: string, nullable: true }
+        user_agent:  { type: string, nullable: true }
+        trace_id:    { type: string, format: uuid, nullable: true }
+        created_at:  { type: string, format: date-time }

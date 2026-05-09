@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Read(**)",
+      "Write(**)",
+      "Edit(**)",
+      "Glob(**)",
+      "Grep(**)",
+      "Bash(**)",
+      "Task(**)"
+    ]
+  },
+  "env": {
+    "CLAUDE_AGENT_MEMORY_DIR": ".claude/agent-memory"
+  }
+}

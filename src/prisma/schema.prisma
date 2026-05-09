@@ -1,0 +1,414 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Native PostgreSQL enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  superadmin
+  admin
+  marketing
+}
+
+enum EnrollmentStatus {
+  submitted
+  payment_pending
+  sync_pending
+  paid
+  completed
+  failed
+  expired
+}
+
+enum ExternalApiStatus {
+  pending
+  processing
+  success
+  failed
+  retrying
+  dead_letter
+}
+
+enum PaymentStatus {
+  initiated
+  pending
+  success
+  failed
+  cancelled
+  expired
+  refunded
+}
+
+enum FollowupStatus {
+  payment_pending
+  call_back_later
+  interested
+  not_interested
+  payment_completed
+  followup_closed
+  invalid_number
+  no_response
+}
+
+// Phase 3A: new enums for public enrollment form
+enum EnrollmentUserRole {
+  STUDENT
+  FRESH_GRADUATE
+  WORKING_PROFESSIONAL
+  CAREER_SWITCHER
+}
+
+enum EducationLevel {
+  SCHOOL
+  JR_COLLEGE
+  UNDERGRADUATE
+  GRADUATE
+  POST_GRADUATE
+  DOCTORATE
+  OTHER
+}
+
+enum Readiness {
+  BEGINNER
+  INTERMEDIATE
+  READY_FOR_INTERVIEW
+}
+
+enum EnrollmentSource {
+  SOCIAL_MEDIA
+  COLLEGE
+  FRIEND
+  GOOGLE
+  OTHER
+}
+
+enum CourseStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MasterStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique @db.VarChar(255)
+  password_hash String    @db.VarChar(255)
+  role          Role      @default(admin)
+  created_at    DateTime  @default(now()) @db.Timestamptz
+  updated_at    DateTime  @updatedAt @db.Timestamptz
+  deleted_at    DateTime? @db.Timestamptz
+
+  refresh_tokens          RefreshToken[]
+  assigned_followups      Followup[]     @relation("AssignedFollowups")
+  authored_followup_notes FollowupNote[] @relation("AuthoredFollowupNotes")
+  audit_logs              AuditLog[]     @relation("ActorAuditLogs")
+
+  @@index([email])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String    @db.Uuid
+  token_hash String    @db.VarChar(255)
+  family_id  String    @db.Uuid
+  revoked_at DateTime? @db.Timestamptz
+  expires_at DateTime  @db.Timestamptz
+  created_at DateTime  @default(now()) @db.Timestamptz
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Restrict)
+
+  @@index([user_id])
+  @@index([token_hash])
+  @@map("refresh_tokens")
+}
+
+model Enrollment {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Legacy fields — nullable for new-shape enrollments
+  first_name      String?             @db.VarChar(100)
+  last_name       String?             @db.VarChar(100)
+  email           String              @db.VarChar(255)
+  phone_number    String?             @db.VarChar(20)
+  plan            String?             @db.VarChar(100)
+  group           String?             @db.VarChar(100)
+  unit            String?             @db.VarChar(100)
+  phase           String?             @db.VarChar(100)
+  segment         String?             @db.VarChar(100)
+  amount          Int?
+  status          EnrollmentStatus    @default(submitted)
+  created_at      DateTime            @default(now()) @db.Timestamptz
+  updated_at      DateTime            @updatedAt @db.Timestamptz
+  deleted_at      DateTime?           @db.Timestamptz
+
+  // Phase 3A: new columns for frontend enrollment form
+  name            String?             @db.VarChar(200)
+  enrollment_code String?             @unique @db.VarChar(40)
+  user_role       EnrollmentUserRole?
+  education       EducationLevel?
+  readiness       Readiness?
+  source          EnrollmentSource?
+  promo_code      String?             @db.VarChar(50)
+
+  payments           Payment[]
+  external_api_logs  ExternalApiLog[]
+  followups          Followup[]
+
+  @@index([email, phone_number])
+  @@index([status])
+  @@index([created_at])
+  @@index([enrollment_code])
+  @@map("enrollments")
+}
+
+model Payment {
+  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  enrollment_id        String               @db.Uuid
+  razorpay_order_id    String               @unique @db.VarChar(255)
+  razorpay_payment_id  String?              @db.VarChar(255)
+  razorpay_signature   String?              @db.VarChar(512)
+  amount               Int
+  currency             String               @default("INR") @db.VarChar(10)
+  status               PaymentStatus        @default(initiated)
+  razorpay_config_id   String?              @db.Uuid
+  created_at           DateTime             @default(now()) @db.Timestamptz
+  updated_at           DateTime             @updatedAt @db.Timestamptz
+
+  enrollment         Enrollment            @relation(fields: [enrollment_id], references: [id], onDelete: Restrict)
+  razorpay_config    RazorpayConfiguration? @relation(fields: [razorpay_config_id], references: [id], onDelete: SetNull)
+
+  @@index([enrollment_id, status])
+  @@map("payments")
+}
+
+model RazorpayConfiguration {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key_id                  String   @db.VarChar(255)
+  key_secret_encrypted    String   @db.Text
+  webhook_secret_encrypted String  @db.Text
+  is_active               Boolean  @default(false)
+  created_at              DateTime @default(now()) @db.Timestamptz
+  updated_at              DateTime @updatedAt @db.Timestamptz
+
+  payments Payment[]
+
+  @@index([is_active])
+  @@map("razorpay_configurations")
+}
+
+model ExternalApiLog {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  enrollment_id   String            @db.Uuid
+  payment_id      String?           @db.Uuid
+  endpoint        String            @db.VarChar(500)
+  request_body    Json
+  response_body   Json?
+  status_code     Int?
+  status          ExternalApiStatus @default(pending)
+  attempts        Int               @default(0)
+  last_error      String?           @db.Text
+  duration_ms     Int?
+  next_attempt_at DateTime?         @db.Timestamptz
+  created_at      DateTime          @default(now()) @db.Timestamptz
+  updated_at      DateTime          @updatedAt @db.Timestamptz
+
+  enrollment Enrollment @relation(fields: [enrollment_id], references: [id], onDelete: Restrict)
+
+  @@index([enrollment_id, status])
+  @@index([status, next_attempt_at])
+  @@map("external_api_logs")
+}
+
+model WebhookEvent {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  event_id     String    @unique @db.VarChar(255)
+  event_type   String    @db.VarChar(100)
+  payload      Json
+  signature    String    @db.VarChar(512)
+  processed    Boolean   @default(false)
+  attempts     Int       @default(0)
+  created_at   DateTime  @default(now()) @db.Timestamptz
+  processed_at DateTime? @db.Timestamptz
+
+  @@index([processed])
+  @@map("webhook_events")
+}
+
+model Followup {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  enrollment_id      String         @db.Uuid
+  status             FollowupStatus @default(payment_pending)
+  reason             String?        @db.VarChar(255)
+  assigned_to        String?        @db.Uuid
+  next_followup_date DateTime?      @db.Timestamptz
+  closed_at          DateTime?      @db.Timestamptz
+  created_at         DateTime       @default(now()) @db.Timestamptz
+  updated_at         DateTime       @updatedAt @db.Timestamptz
+  deleted_at         DateTime?      @db.Timestamptz
+
+  enrollment Enrollment   @relation(fields: [enrollment_id], references: [id], onDelete: Restrict)
+  assignee   User?        @relation("AssignedFollowups", fields: [assigned_to], references: [id], onDelete: SetNull)
+  notes      FollowupNote[]
+
+  @@index([enrollment_id])
+  @@index([assigned_to, status, next_followup_date])
+  @@index([status])
+  @@map("followups")
+}
+
+model AuditLog {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actor_id     String?   @db.Uuid
+  actor_email  String?   @db.VarChar(255)
+  action       String    @db.VarChar(100)
+  entity_type  String    @db.VarChar(100)
+  entity_id    String?   @db.Uuid
+  changes      Json?
+  ip_address   String?   @db.VarChar(64)
+  user_agent   String?   @db.VarChar(500)
+  trace_id     String?   @db.Uuid
+  created_at   DateTime  @default(now()) @db.Timestamptz
+
+  actor        User?     @relation("ActorAuditLogs", fields: [actor_id], references: [id], onDelete: SetNull)
+
+  @@index([entity_type, entity_id])
+  @@index([actor_id, created_at])
+  @@index([action, created_at])
+  @@map("audit_logs")
+}
+
+model FollowupNote {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  followup_id String   @db.Uuid
+  author_id   String   @db.Uuid
+  body        String   @db.Text
+  metadata    Json?
+  created_at  DateTime @default(now()) @db.Timestamptz
+
+  followup Followup @relation(fields: [followup_id], references: [id], onDelete: Cascade)
+  author   User     @relation("AuthoredFollowupNotes", fields: [author_id], references: [id], onDelete: Restrict)
+
+  @@index([followup_id, created_at])
+  @@map("followup_notes")
+}
+
+model CourseMaster {
+  id                  Int              @id @default(autoincrement())
+  nameOfCourseAsGroup String           @map("name_of_course_as_group")
+  coupon              String?
+  courseFee           Decimal          @map("course_fee") @db.Decimal(10, 2)
+  description         String?          @db.Text
+  status              CourseStatus     @default(ACTIVE)
+  isSystemDefault     Boolean          @default(false) @map("is_system_default")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  // FK: education master
+  educationId         Int?             @map("education_id")
+  education           EducationMaster? @relation(fields: [educationId], references: [id], onDelete: Restrict)
+
+  // FK: duration master
+  durationId          Int?             @map("duration_id")
+  duration            DurationMaster?  @relation(fields: [durationId], references: [id], onDelete: Restrict)
+
+  @@map("course_master")
+  @@index([status])
+  @@index([nameOfCourseAsGroup])
+  @@index([educationId])
+  @@index([durationId])
+}
+
+model EducationMaster {
+  id              Int          @id @default(autoincrement())
+  name            String       @unique
+  code            String       @unique
+  description     String?
+  status          MasterStatus @default(ACTIVE)
+  isSystemDefault Boolean      @default(false) @map("is_system_default")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  courses     CourseMaster[]
+
+  @@map("education_master")
+  @@index([status])
+  @@index([name])
+}
+
+model DurationMaster {
+  id              Int          @id @default(autoincrement())
+  label           String       @unique
+  sortOrder       Int          @default(0) @map("sort_order")
+  status          MasterStatus @default(ACTIVE)
+  isSystemDefault Boolean      @default(false) @map("is_system_default")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  courses   CourseMaster[]
+
+  @@map("duration_master")
+  @@index([status])
+  @@index([sortOrder])
+}
+
+model WebhookDelivery {
+  id              Int       @id @default(autoincrement())
+  enrollmentId    String?   @map("enrollment_id")
+  destinationUrl  String    @map("destination_url")
+  method          String    @default("POST")
+  requestHeaders  Json?     @map("request_headers")
+  requestPayload  Json      @map("request_payload")
+  responseStatus  Int?      @map("response_status")
+  responseBody    String?   @db.Text @map("response_body")
+  errorMessage    String?   @db.Text @map("error_message")
+  durationMs      Int?      @map("duration_ms")
+  ok              Boolean   @default(false)
+  promoCode       String?   @map("promo_code")
+  courseMatched   Boolean   @default(false) @map("course_matched")
+  source          String    @default("BACKEND")
+  sentAt          DateTime  @default(now()) @map("sent_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@map("webhook_delivery")
+  @@index([sentAt(sort: Desc)])
+  @@index([enrollmentId])
+  @@index([ok])
+  @@index([source])
+}
+
+model Permission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String   @unique @db.VarChar(150)
+  description String?  @db.VarChar(500)
+  created_at  DateTime @default(now()) @db.Timestamptz
+
+  role_permissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  role          Role
+  permission_id String     @db.Uuid
+
+  permission    Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+
+  @@unique([role, permission_id])
+  @@index([role])
+  @@map("role_permissions")
+}
