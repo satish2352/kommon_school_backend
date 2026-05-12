@@ -191,10 +191,12 @@ async function run() {
     assert(result === null, `Expected null for bogus code, got ${JSON.stringify(result)}`);
   });
 
-  // ── 8. All 11 payload fields present in both paths ─────────────────────────
+  // ── 8. All required payload fields present in both paths ─────────────────────
+  // Phase B: payload now has 12 fields (added planSelection block).
+  // We assert the 11 core fields by name and the planSelection field by presence.
   const REQUIRED_FIELDS = ['firstName','lastName','email','phoneNumber','plan','group','unit','phase','segment','transactionId','amount'];
 
-  await test('8a. All 11 payload fields present when course is provided', async () => {
+  await test('8a. All 11 core payload fields present when course is provided', async () => {
     const payload = buildPayload({
       enrollment: baseEnrollment,
       razorpayPaymentId: 'pay_test',
@@ -204,10 +206,13 @@ async function run() {
     for (const key of REQUIRED_FIELDS) {
       assert(key in payload, `Missing field: ${key}`);
     }
-    assert(Object.keys(payload).length === 11, `Expected 11 fields, got ${Object.keys(payload).length}: ${Object.keys(payload).join(', ')}`);
+    // planSelection is always present (null when no plan selected)
+    assert('planSelection' in payload, 'Missing field: planSelection');
+    // Exactly 12 top-level fields (11 core + planSelection)
+    assert(Object.keys(payload).length === 12, `Expected 12 fields, got ${Object.keys(payload).length}: ${Object.keys(payload).join(', ')}`);
   });
 
-  await test('8b. All 11 payload fields present when course = null', async () => {
+  await test('8b. All 11 core payload fields present when course = null', async () => {
     const payload = buildPayload({
       enrollment: baseEnrollment,
       razorpayPaymentId: 'pay_test',
@@ -217,7 +222,56 @@ async function run() {
     for (const key of REQUIRED_FIELDS) {
       assert(key in payload, `Missing field: ${key}`);
     }
-    assert(Object.keys(payload).length === 11, `Expected 11 fields, got ${Object.keys(payload).length}: ${Object.keys(payload).join(', ')}`);
+    // planSelection is always present (null when no plan selected)
+    assert('planSelection' in payload, 'Missing field: planSelection');
+    // Exactly 12 top-level fields (11 core + planSelection)
+    assert(Object.keys(payload).length === 12, `Expected 12 fields, got ${Object.keys(payload).length}: ${Object.keys(payload).join(', ')}`);
+  });
+
+  // ── 8c. planSelection is null when enrollment has no plan_pricing ─────────
+  await test('8c. planSelection is null when enrollment has no plan_pricing', async () => {
+    const enrollmentNoPlan = { ...baseEnrollment };
+    delete enrollmentNoPlan.plan_pricing;
+    const payload = buildPayload({
+      enrollment: enrollmentNoPlan,
+      razorpayPaymentId: 'pay_test',
+      amount: 100,
+      course: null,
+    });
+    assert(payload.planSelection === null, `Expected planSelection=null when no plan, got ${JSON.stringify(payload.planSelection)}`);
+  });
+
+  // ── 8d. planSelection block fields when plan_pricing is present ───────────
+  await test('8d. planSelection block has all required fields when plan_pricing is present', async () => {
+    const enrollmentWithPlan = {
+      ...baseEnrollment,
+      plan_pricing: {
+        id:             10,
+        durationMonths: 3,
+        basePrice:      2997,
+        discountPercent: 10,
+        finalPrice:     2697.30,
+        discountLabel:  'Save 10%',
+        plan: {
+          id:        2,
+          tier:      'GOLD',
+          name:      'Gold Plan',
+          promoCode: 'GOLD10',
+        },
+      },
+    };
+    const payload = buildPayload({
+      enrollment: enrollmentWithPlan,
+      razorpayPaymentId: 'pay_plan_test',
+      amount: 0,
+      course: null,
+    });
+    assert(payload.planSelection !== null, 'planSelection should not be null');
+    assert(payload.planSelection.tier === 'GOLD',       `Expected tier=GOLD, got ${payload.planSelection.tier}`);
+    assert(payload.planSelection.finalPrice === 2697.30, `Expected finalPrice=2697.30, got ${payload.planSelection.finalPrice}`);
+    assert(payload.planSelection.promoCode === 'GOLD10', `Expected promoCode=GOLD10, got ${payload.planSelection.promoCode}`);
+    assert(payload.planSelection.discountLabel === 'Save 10%', `Expected discountLabel='Save 10%', got ${payload.planSelection.discountLabel}`);
+    assert(payload.planSelection.durationMonths === 3,  `Expected durationMonths=3, got ${payload.planSelection.durationMonths}`);
   });
 
   // ── 9. When course is present, paise `amount` param is IGNORED ────────────

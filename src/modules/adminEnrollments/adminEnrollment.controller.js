@@ -1,0 +1,61 @@
+'use strict';
+
+const { createManualEnrollment, createBulkEnrollments } = require('./adminEnrollment.service');
+const { sendSuccess } = require('../../utils/ApiResponse');
+const asyncHandler = require('../../utils/asyncHandler');
+const { HTTP } = require('../../config/constants');
+
+// ---------------------------------------------------------------------------
+// CSV template column definitions
+// ---------------------------------------------------------------------------
+const CSV_HEADER = 'name,email,phone,role,education,readiness,source,promoCode,planTier,durationMonths,notes';
+const CSV_EXAMPLE =
+  'Jane Doe,jane@example.com,9876543210,STUDENT,GRADUATE,BEGINNER,GOOGLE,NEW501,GOLD,3,Admin created';
+
+/**
+ * POST /api/v1/admin/enrollments/manual
+ * Create a single enrollment manually (no Razorpay).
+ */
+const createManual = asyncHandler(async (req, res) => {
+  const result = await createManualEnrollment({
+    data: req.body,
+    actor: req.user,
+    adminSource: 'MANUAL',
+    traceId: req.traceId,
+  });
+
+  sendSuccess(res, HTTP.CREATED, result, 'Enrollment created successfully');
+});
+
+/**
+ * POST /api/v1/admin/enrollments/bulk
+ * Bulk-create enrollments from a CSV file (multipart/form-data).
+ */
+const createBulk = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    const ApiError = require('../../utils/ApiError');
+    throw ApiError.badRequest('No CSV file uploaded. Use field name "file".');
+  }
+
+  const result = await createBulkEnrollments({
+    fileBuffer: req.file.buffer,
+    actor: req.user,
+    traceId: req.traceId,
+  });
+
+  sendSuccess(res, HTTP.CREATED, result, 'Bulk enrollment processing complete');
+});
+
+/**
+ * GET /api/v1/admin/enrollments/csv-template
+ * Download a CSV template with header row + one example row.
+ */
+const getCsvTemplate = asyncHandler(async (req, res) => {
+  const csv = `${CSV_HEADER}\n${CSV_EXAMPLE}\n`;
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="enrollment-template.csv"');
+  res.status(HTTP.OK).send(csv);
+});
+
+module.exports = { createManual, createBulk, getCsvTemplate };

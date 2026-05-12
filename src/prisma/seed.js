@@ -30,6 +30,13 @@ const PERMISSION_DESCRIPTIONS = {
   [PERMISSIONS.DURATION_MASTER_MANAGE]: 'Create, update, and delete duration master records',
   [PERMISSIONS.WEBHOOKS_VIEW]: 'View webhook delivery history',
   [PERMISSIONS.WEBHOOKS_TEST]: 'Send test webhooks from the admin panel',
+  [PERMISSIONS.PLANS_READ]:             'View plan catalog and pricings',
+  [PERMISSIONS.PLANS_CREATE]:           'Create new subscription plans',
+  [PERMISSIONS.PLANS_UPDATE]:           'Update plan metadata and pricing',
+  [PERMISSIONS.PLANS_DELETE]:           'Delete (non-referenced) plans',
+  [PERMISSIONS.PLANS_ENROLLMENTS_READ]: 'View enrollments for a specific plan',
+  [PERMISSIONS.ENROLLMENTS_MANUAL_CREATE]: 'Create an enrollment manually without Razorpay payment',
+  [PERMISSIONS.ENROLLMENTS_BULK_UPLOAD]:   'Upload a CSV to bulk-create enrollments',
 };
 
 // ---------------------------------------------------------------------------
@@ -54,12 +61,21 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.DURATION_MASTER_MANAGE,
     PERMISSIONS.WEBHOOKS_VIEW,
     PERMISSIONS.WEBHOOKS_TEST,
+    PERMISSIONS.PLANS_READ,
+    PERMISSIONS.PLANS_CREATE,
+    PERMISSIONS.PLANS_UPDATE,
+    PERMISSIONS.PLANS_DELETE,
+    PERMISSIONS.PLANS_ENROLLMENTS_READ,
+    PERMISSIONS.ENROLLMENTS_MANUAL_CREATE,
+    PERMISSIONS.ENROLLMENTS_BULK_UPLOAD,
   ],
   marketing: [
     PERMISSIONS.FOLLOWUPS_VIEW,
     PERMISSIONS.FOLLOWUPS_MANAGE,
     PERMISSIONS.PAYMENTS_RETRY,
     PERMISSIONS.ENROLLMENTS_VIEW,
+    PERMISSIONS.PLANS_READ,
+    PERMISSIONS.PLANS_ENROLLMENTS_READ,
   ],
 };
 
@@ -394,6 +410,160 @@ async function seedCourses() {
   console.log(`[seed] courses: ${created} created, ${updated} updated`);
 }
 
+async function seedPlans() {
+  console.log('[seed] seeding plans...');
+
+  // Plan definitions — all system-default, ACTIVE
+  const planDefs = [
+    {
+      tier:           'SILVER',
+      name:           'Silver',
+      tagline:        'Get started',
+      highlightLabel: null,
+      promoCode:      'NEW501',
+      sortOrder:      1,
+      features:       [
+        'Access to core video library',
+        'Weekly practice sets',
+        'Email support',
+        'Mobile + desktop access',
+      ],
+    },
+    {
+      tier:           'GOLD',
+      name:           'Gold',
+      tagline:        'Most chosen',
+      highlightLabel: 'Most Popular',
+      promoCode:      'NEW501',
+      sortOrder:      2,
+      features:       [
+        'Everything in Silver',
+        '1:1 monthly mentor session',
+        'Mock interviews (2/month)',
+        'Priority email + chat support',
+        'Resume + LinkedIn review',
+      ],
+    },
+    {
+      tier:           'PLATINUM',
+      name:           'Platinum',
+      tagline:        'Maximum value',
+      highlightLabel: 'Best Value',
+      promoCode:      'NEW501',
+      sortOrder:      3,
+      features:       [
+        'Everything in Gold',
+        'Unlimited 1:1 mentor sessions',
+        'Mock interviews (unlimited)',
+        'Dedicated career coach',
+        'Job referral network access',
+        'Capstone project review',
+      ],
+    },
+  ];
+
+  // Pricing matrix keyed by tier
+  const pricingMatrix = {
+    SILVER: [
+      { durationMonths: 1,  basePrice: 499.00,   discountPercent: 0,  finalPrice: 499.00,   discountLabel: null },
+      { durationMonths: 3,  basePrice: 1497.00,  discountPercent: 5,  finalPrice: 1422.15,  discountLabel: 'Save 5%' },
+      { durationMonths: 6,  basePrice: 2994.00,  discountPercent: 10, finalPrice: 2694.60,  discountLabel: 'Save 10%' },
+      { durationMonths: 12, basePrice: 5988.00,  discountPercent: 15, finalPrice: 5089.80,  discountLabel: 'Save 15%' },
+    ],
+    GOLD: [
+      { durationMonths: 1,  basePrice: 999.00,   discountPercent: 0,  finalPrice: 999.00,   discountLabel: null },
+      { durationMonths: 3,  basePrice: 2997.00,  discountPercent: 5,  finalPrice: 2847.15,  discountLabel: 'Save 5%' },
+      { durationMonths: 6,  basePrice: 5994.00,  discountPercent: 10, finalPrice: 5394.60,  discountLabel: 'Save 10%' },
+      { durationMonths: 12, basePrice: 11988.00, discountPercent: 15, finalPrice: 10189.80, discountLabel: 'Save 15%' },
+    ],
+    PLATINUM: [
+      { durationMonths: 1,  basePrice: 1999.00,  discountPercent: 0,  finalPrice: 1999.00,  discountLabel: null },
+      { durationMonths: 3,  basePrice: 5997.00,  discountPercent: 5,  finalPrice: 5697.15,  discountLabel: 'Save 5%' },
+      { durationMonths: 6,  basePrice: 11994.00, discountPercent: 10, finalPrice: 10794.60, discountLabel: 'Save 10%' },
+      { durationMonths: 12, basePrice: 23988.00, discountPercent: 15, finalPrice: 20389.80, discountLabel: 'Save 15%' },
+    ],
+  };
+
+  let plansCreated = 0;
+  let plansUpdated = 0;
+  let pricingsCreated = 0;
+  let pricingsUpdated = 0;
+
+  for (const def of planDefs) {
+    const existing = await prisma.plan.findUnique({ where: { tier: def.tier } });
+
+    let plan;
+    if (existing) {
+      plan = await prisma.plan.update({
+        where: { tier: def.tier },
+        data: {
+          name:           def.name,
+          tagline:        def.tagline,
+          highlightLabel: def.highlightLabel,
+          promoCode:      def.promoCode,
+          sortOrder:      def.sortOrder,
+          features:       def.features,
+          status:         'ACTIVE',
+          isSystemDefault: true,
+        },
+      });
+      plansUpdated++;
+    } else {
+      plan = await prisma.plan.create({
+        data: {
+          tier:           def.tier,
+          name:           def.name,
+          tagline:        def.tagline,
+          highlightLabel: def.highlightLabel,
+          promoCode:      def.promoCode,
+          sortOrder:      def.sortOrder,
+          features:       def.features,
+          status:         'ACTIVE',
+          isSystemDefault: true,
+        },
+      });
+      plansCreated++;
+    }
+
+    // Upsert pricing rows for this plan
+    for (const pricing of pricingMatrix[def.tier]) {
+      const existingPricing = await prisma.planPricing.findUnique({
+        where: { planId_durationMonths: { planId: plan.id, durationMonths: pricing.durationMonths } },
+      });
+
+      if (existingPricing) {
+        await prisma.planPricing.update({
+          where: { id: existingPricing.id },
+          data: {
+            basePrice:       pricing.basePrice,
+            discountPercent: pricing.discountPercent,
+            finalPrice:      pricing.finalPrice,
+            discountLabel:   pricing.discountLabel,
+            status:          'ACTIVE',
+          },
+        });
+        pricingsUpdated++;
+      } else {
+        await prisma.planPricing.create({
+          data: {
+            planId:          plan.id,
+            durationMonths:  pricing.durationMonths,
+            basePrice:       pricing.basePrice,
+            discountPercent: pricing.discountPercent,
+            finalPrice:      pricing.finalPrice,
+            discountLabel:   pricing.discountLabel,
+            status:          'ACTIVE',
+          },
+        });
+        pricingsCreated++;
+      }
+    }
+  }
+
+  console.log(`[seed] plans: ${plansCreated} created, ${plansUpdated} updated`);
+  console.log(`[seed] plan pricings: ${pricingsCreated} created, ${pricingsUpdated} updated`);
+}
+
 async function main() {
   // Permissions must be seeded before users so role assignments are ready.
   await seedPermissions();
@@ -403,6 +573,7 @@ async function main() {
   await seedEducationMaster();
   await seedDurationMaster();
   await seedCourses();
+  await seedPlans();
 }
 
 main()

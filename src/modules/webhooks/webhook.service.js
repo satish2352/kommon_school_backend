@@ -121,7 +121,26 @@ async function getStats(traceId) {
  * @returns {Promise<object>} persisted WebhookDelivery row
  */
 async function sendTestWebhook(sample, traceId) {
-  // Build a minimal enrollment-like object from the sample shape
+  // Build a minimal enrollment-like object from the sample shape.
+  // When planSelection is present in the sample, attach a synthetic plan_pricing
+  // so that buildPayload can emit the planSelection block in the webhook payload.
+  const samplePlanSelection = sample?.planSelection ?? null;
+  const syntheticPlanPricing = samplePlanSelection
+    ? {
+        durationMonths:  samplePlanSelection.durationMonths  ?? 1,
+        basePrice:       samplePlanSelection.basePrice       ?? 0,
+        discountPercent: samplePlanSelection.discountPercent ?? 0,
+        finalPrice:      samplePlanSelection.finalPrice      ?? 0,
+        discountLabel:   samplePlanSelection.discountLabel   ?? null,
+        plan: {
+          id:        samplePlanSelection.id   ?? null,
+          tier:      samplePlanSelection.tier ?? null,
+          name:      samplePlanSelection.name ?? null,
+          promoCode: samplePlanSelection.promoCode ?? null,
+        },
+      }
+    : null;
+
   const enrollment = {
     id:              sample?.enrollment?.id || 'admin_test',
     enrollment_code: sample?.enrollment?.enrollmentId || null,
@@ -130,6 +149,7 @@ async function sendTestWebhook(sample, traceId) {
     phone_number:    sample?.enrollment?.phone || '',
     promo_code:      null,
     amount:          sample?.order?.amount ?? 0,
+    plan_pricing:    syntheticPlanPricing,
   };
 
   const razorpayPaymentId = sample?.rzpResponse?.razorpay_payment_id || null;

@@ -96,8 +96,20 @@ const verifyPaymentForEnrollment = asyncHandler(async (req, res) => {
   const enrollmentId = req.params.id;
   const { paymentId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
 
-  // Guard: ensure the enrollment exists before attempting verify.
-  const enrollment = await enrollmentService.getEnrollmentById(enrollmentId, req.traceId);
+  // Load enrollment with plan_pricing relation so the webhook payload builder
+  // can include the plan block. The standard getEnrollmentById does not include it.
+  const { getPrismaClient } = require('../../config/database');
+  const db = getPrismaClient();
+  const enrollment = await db.enrollment.findFirst({
+    where: { id: enrollmentId, deleted_at: null },
+    include: {
+      payments: { orderBy: { created_at: 'desc' }, take: 1 },
+      plan_pricing: { include: { plan: true } },
+    },
+  });
+  if (!enrollment) {
+    throw ApiError.notFound('Enrollment not found');
+  }
 
   // Translate camelCase payload to the snake_case shape the service expects.
   const snakeCaseBody = {
@@ -111,6 +123,7 @@ const verifyPaymentForEnrollment = asyncHandler(async (req, res) => {
   // Fire webhook non-blocking — deferred via setImmediate so it never delays
   // the API response and never surfaces errors to the caller.
   // Only reached on successful verification (verifyPayment throws on failure).
+  // enrollment now includes plan_pricing with plan for the webhook plan block.
   fireEnrollmentWebhook({
     enrollment,
     razorpayPaymentId: razorpayPaymentId,

@@ -76,6 +76,14 @@ module.exports = Object.freeze({
     // Phase 3A: auth change-password error codes
     INVALID_CURRENT_PASSWORD: 'INVALID_CURRENT_PASSWORD',
     SAME_PASSWORD: 'SAME_PASSWORD',
+    // Plans
+    PLAN_NOT_SELECTED: 'PLAN_NOT_SELECTED',
+    PLAN_INACTIVE: 'PLAN_INACTIVE',
+    PLAN_PRICING_INACTIVE: 'PLAN_PRICING_INACTIVE',
+    PLAN_PRICING_NOT_FOUND: 'PLAN_PRICING_NOT_FOUND',
+    // Admin enrollments
+    CSV_INVALID_HEADERS: 'CSV_INVALID_HEADERS',
+    CSV_TOO_LARGE: 'CSV_TOO_LARGE',
   },
 
   // BullMQ queue names
@@ -116,5 +124,14 @@ module.exports = Object.freeze({
     // Webhooks admin
     WEBHOOKS_VIEW: 'webhooks:view',
     WEBHOOKS_TEST: 'webhooks:test',
+    // Plans
+    PLANS_READ:              'plans:read',
+    PLANS_CREATE:            'plans:create',
+    PLANS_UPDATE:            'plans:update',
+    PLANS_DELETE:            'plans:delete',
+    PLANS_ENROLLMENTS_READ:  'plans:enrollments:read',
+    // Admin Enrollments
+    ENROLLMENTS_MANUAL_CREATE: 'enrollments:manual:create',
+    ENROLLMENTS_BULK_UPLOAD:   'enrollments:bulk:upload',
   },
 });

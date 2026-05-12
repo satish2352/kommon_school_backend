@@ -12,6 +12,11 @@ const {
   verifyPaymentNestedSchema,
 } = require('./enrollment.validator');
 const { PERMISSIONS } = require('../../config/constants');
+const planController = require('../plans/plan.controller');
+const {
+  selectForEnrollmentSchema,
+  enrollmentIdParamSchema,
+} = require('../plans/plan.validator');
 
 const router = Router();
 
@@ -27,6 +32,14 @@ router.post(
   '/:id/payment-order',
   validate(idParamSchema, 'params'),
   controller.createPaymentOrderForEnrollment,
+);
+
+// Plans: select a plan for an enrollment (must be called before payment-order)
+router.patch(
+  '/:id/plan',
+  validate(enrollmentIdParamSchema, 'params'),
+  validate(selectForEnrollmentSchema),
+  planController.selectPlan,
 );
 
 // Phase 3A: verify a Razorpay payment (public marketing flow, camelCase body)

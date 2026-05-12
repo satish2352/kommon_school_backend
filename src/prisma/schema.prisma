@@ -99,6 +99,17 @@ enum MasterStatus {
   INACTIVE
 }
 
+enum PlanTier {
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum PlanStatus {
+  ACTIVE
+  INACTIVE
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -163,6 +174,9 @@ model Enrollment {
   readiness       Readiness?
   source          EnrollmentSource?
   promo_code      String?             @db.VarChar(50)
+
+  plan_pricing_id Int?
+  plan_pricing    PlanPricing? @relation("EnrollmentPlanPricing", fields: [plan_pricing_id], references: [id], onDelete: SetNull)
 
   payments           Payment[]
   external_api_logs  ExternalApiLog[]
@@ -388,6 +402,43 @@ model WebhookDelivery {
   @@index([enrollmentId])
   @@index([ok])
   @@index([source])
+}
+
+model Plan {
+  id              Int        @id @default(autoincrement())
+  name            String     @db.VarChar(100)
+  tier            PlanTier   @unique
+  tagline         String?    @db.VarChar(200)
+  description     String?    @db.Text
+  features        Json       @default("[]")
+  highlightLabel  String?    @map("highlight_label") @db.VarChar(50)
+  promoCode       String?    @map("promo_code") @db.VarChar(50)
+  sortOrder       Int        @default(0) @map("sort_order")
+  status          PlanStatus @default(ACTIVE)
+  isSystemDefault Boolean    @default(false) @map("is_system_default")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  pricings        PlanPricing[]
+  @@map("plans")
+  @@index([status, sortOrder])
+}
+
+model PlanPricing {
+  id              Int        @id @default(autoincrement())
+  planId          Int        @map("plan_id")
+  durationMonths  Int        @map("duration_months")
+  basePrice       Decimal    @map("base_price") @db.Decimal(10,2)
+  discountPercent Decimal    @default(0) @map("discount_percent") @db.Decimal(5,2)
+  finalPrice      Decimal    @map("final_price") @db.Decimal(10,2)
+  discountLabel   String?    @map("discount_label") @db.VarChar(100)
+  status          PlanStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  plan            Plan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+  enrollments     Enrollment[] @relation("EnrollmentPlanPricing")
+  @@unique([planId, durationMonths])
+  @@map("plan_pricing")
+  @@index([status])
 }
 
 model Permission {

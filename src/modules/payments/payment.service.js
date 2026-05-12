@@ -7,7 +7,8 @@ const { enqueueExternalApiSync } = require('../../queues/externalApi.queue');
 const auditService = require('../audit/audit.service');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../config/logger');
-const { ERROR_CODES, RAZORPAY_CURRENCY } = require('../../config/constants');
+const { ERROR_CODES, RAZORPAY_CURRENCY, HTTP } = require('../../config/constants');
+const { getPrismaClient } = require('../../config/database');
 
 /**
  * Create a Razorpay order for an existing enrollment.
@@ -19,7 +20,20 @@ const { ERROR_CODES, RAZORPAY_CURRENCY } = require('../../config/constants');
  * resume checkout instead of creating a parallel order.
  */
 async function createOrder(enrollmentId, traceId) {
-  const enrollment = await enrollmentRepo.findEnrollmentById(enrollmentId);
+  // Load enrollment with plan_pricing (and plan) to determine the amount
+  const db = getPrismaClient();
+  const enrollment = await db.enrollment.findFirst({
+    where: { id: enrollmentId, deleted_at: null },
+    include: {
+      payments: {
+        orderBy: { created_at: 'desc' },
+        take: 1,
+      },
+      plan_pricing: {
+        include: { plan: true },
+      },
+    },
+  });
   if (!enrollment) throw ApiError.notFound('Enrollment not found');
 
   // Edge case #14: do not create a new order on an already-completed enrollment
@@ -29,6 +43,36 @@ async function createOrder(enrollmentId, traceId) {
       ERROR_CODES.PAYMENT_ALREADY_COMPLETED,
     );
   }
+
+  // Plan must be selected before creating a payment order.
+  // This replaces the old course-fee fallback.
+  if (!enrollment.plan_pricing_id || !enrollment.plan_pricing) {
+    logger.warn({
+      msg:           'payment_order_plan_not_selected',
+      traceId,
+      enrollment_id: enrollmentId,
+    });
+    throw new ApiError(
+      400,
+      ERROR_CODES.PLAN_NOT_SELECTED,
+      'A subscription plan must be selected before proceeding to payment',
+    );
+  }
+
+  // Verify the selected pricing and parent plan are both ACTIVE
+  if (enrollment.plan_pricing.status !== 'ACTIVE' || enrollment.plan_pricing.plan.status !== 'ACTIVE') {
+    const code = enrollment.plan_pricing.plan.status !== 'ACTIVE'
+      ? ERROR_CODES.PLAN_INACTIVE
+      : ERROR_CODES.PLAN_PRICING_INACTIVE;
+    throw new ApiError(
+      400,
+      code,
+      'Selected plan is no longer available. Please select a different plan.',
+    );
+  }
+
+  // Amount in paise from plan_pricing.finalPrice (already stamped on enrollment by selectForEnrollment)
+  const amountPaise = enrollment.amount;
 
   const existingPayments = await repo.findPaymentsByEnrollmentId(enrollmentId);
   const reusable = existingPayments.find((p) => p.status === 'initiated' || p.status === 'pending');
@@ -51,13 +95,13 @@ async function createOrder(enrollmentId, traceId) {
   const { instance, config } = await razorpayService.getActiveConfig();
 
   const order = await razorpayService.createOrder(instance, {
-    amount: enrollment.amount,
+    amount: amountPaise,
     currency: RAZORPAY_CURRENCY,
     receipt: enrollment.id,
     notes: {
       enrollmentId: enrollment.id,
       email: enrollment.email,
-      plan: enrollment.plan,
+      planTier: enrollment.plan_pricing?.plan?.tier ?? null,
     },
   });
 
@@ -66,12 +110,13 @@ async function createOrder(enrollmentId, traceId) {
   const payment = await repo.createPayment({
     enrollment_id: enrollment.id,
     razorpay_order_id: order.id,
-    amount: enrollment.amount,
+    amount: amountPaise,
     currency: RAZORPAY_CURRENCY,
     status: 'initiated',
     razorpay_config_id: config.id,
   });
 
+  // Status is already 'payment_pending' (set by selectForEnrollment) — no-op update is fine
   await enrollmentRepo.updateEnrollmentStatus(enrollment.id, 'payment_pending');
 
   logger.info({

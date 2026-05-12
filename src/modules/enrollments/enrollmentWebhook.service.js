@@ -29,6 +29,12 @@ const WEBHOOK_URL =
   process.env.ENROLLMENT_WEBHOOK_URL ||
   'https://webhook.site/8012a95d-2521-4b64-b59f-1cbf3bd5e6e0';
 
+// Per-delivery HTTP timeout in milliseconds.
+// Prevents a slow webhook target from hanging indefinitely.
+// Override via WEBHOOK_DELIVERY_TIMEOUT_MS env var (parsed as integer).
+const WEBHOOK_DELIVERY_TIMEOUT_MS =
+  parseInt(process.env.WEBHOOK_DELIVERY_TIMEOUT_MS, 10) || 10000;
+
 // ---------------------------------------------------------------------------
 // Payload builder
 // ---------------------------------------------------------------------------
@@ -85,6 +91,21 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     amountRupees = Math.round((amount ?? 0) / 100);
   }
 
+  // Build the plan block from the enrollment's plan_pricing relation (if selected).
+  // Requires enrollment to be loaded with: include: { plan_pricing: { include: { plan: true } } }
+  const planPricing = enrollment?.plan_pricing;
+  const planBlock = planPricing ? {
+    id:              planPricing.plan?.id ?? null,
+    tier:            planPricing.plan?.tier ?? null,
+    name:            planPricing.plan?.name ?? null,
+    promoCode:       planPricing.plan?.promoCode ?? null,
+    durationMonths:  planPricing.durationMonths,
+    basePrice:       Number(planPricing.basePrice),
+    discountPercent: Number(planPricing.discountPercent),
+    finalPrice:      Number(planPricing.finalPrice),
+    discountLabel:   planPricing.discountLabel ?? null,
+  } : null;
+
   return {
     firstName,
     lastName,
@@ -97,6 +118,10 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     segment:       'enterprise',
     transactionId,
     amount:        amountRupees,
+    // Subscription plan block — null when no plan was selected (legacy enrollments).
+    // Note: top-level 'plan' is already used for the legacy 'SUMAGO30' string field,
+    // so this block is exposed as 'planSelection' for consumers.
+    planSelection: planBlock,
   };
 }
 
@@ -129,11 +154,16 @@ async function executeWebhookDelivery({ enrollment, payload, source = 'BACKEND',
   let responseBody = null;
   let errorMessage = null;
 
+  const controller = new AbortController();
+  // Abort the fetch after WEBHOOK_DELIVERY_TIMEOUT_MS to avoid hanging on slow targets
+  const timeoutId = setTimeout(() => controller.abort(), WEBHOOK_DELIVERY_TIMEOUT_MS);
+
   try {
     response = await fetch(WEBHOOK_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
+      signal:  controller.signal,
     });
 
     try {
@@ -146,7 +176,12 @@ async function executeWebhookDelivery({ enrollment, payload, source = 'BACKEND',
       responseBody = null;
     }
   } catch (fetchErr) {
-    errorMessage = fetchErr?.message ?? String(fetchErr);
+    // AbortError means our timeout fired; record it as 'TIMEOUT' for clarity
+    errorMessage = fetchErr?.name === 'AbortError'
+      ? 'TIMEOUT'
+      : (fetchErr?.message ?? String(fetchErr));
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const durationMs = Date.now() - startMs;

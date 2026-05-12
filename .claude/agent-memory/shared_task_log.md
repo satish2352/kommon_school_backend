@@ -175,6 +175,31 @@ Each task is a level-2 heading with this structure:
   - 2026-04-25T00:04:00Z critique gate: reviewer ✅, tester ✅ with zero outstanding issues (defect documented as assumption/gotcha, not a doc inaccuracy)
   - 2026-04-25T00:04:00Z orchestrator: stage complete
 
+## T-2026-012 — Phase A: Subscription/Membership Plans Feature
+- status: in_progress
+- stage: develop
+- started: 2026-05-09T12:00:00Z
+- updated: 2026-05-09T12:10:00Z
+- iterations: { develop: 1, review: 0, test: 0 }
+- summary: Add Plan + PlanPricing models, full plans module, permissions, seed, tests
+- artifacts: src/modules/plans/*, src/prisma/schema.prisma, src/prisma/seed.js, src/prisma/migrations/20260509000000_add_plans_and_plan_pricing/, tests/plans/plan.service.test.js
+- notes:
+  - 2026-05-09T12:10:00Z developer: completed Phase A — schema patched (promoCode + @map annotations), server-side finalPrice computation, marketing permissions fixed, 8/8 plan tests pass, seed idempotent, migration applied to dev DB
+  - 2026-05-09T00:00:00Z reviewer: ❌ 3 blockers — (1) highlightLabel missing @map("highlight_label") in schema; (2) selectForEnrollment TOCTOU race (no transaction wrapping status-guard + update); (3) migration.sql creates no tables on a fresh DB (only patches existing columns)
+  - 2026-05-09T18:00:00Z developer: iteration 2 — fixed all 3 blockers + 3 should-fix items: B1 (@map added + column renamed in DB), B2 (interactive tx + explicit payment count), B3 (migration rewritten with CREATE TABLE IF NOT EXISTS + CREATE TYPE guards), S1 (PLANS_DELETE permission on deactivate-pricing route), S2 (explicit tx.payment.count()), S4 (getPublicById returns 404 for INACTIVE), S5 (test 8 renumbered to end); migrate diff empty; 8/8 plan tests pass; all other tests unchanged
+  - 2026-05-09T18:30:00Z developer: Phase B iteration 1 — added PLAN_INACTIVE to ERROR_CODES; extended payment.service.js plan guard to check both pricing.status AND plan.status (PLAN_INACTIVE 400); added promoCode+discountLabel to planSelection block in enrollmentWebhook.service.js; updated webhookPayload tests 8a/8b to expect 12 fields, added 8c+8d; updated createPublicPaymentOrder tests to 5 (added PLAN_INACTIVE + idempotency); all 5 test files: 0 failures
+
+## T-2026-F1 — Phase F1: Admin-side Enrollment Creation (single + CSV bulk)
+- status: in_progress
+- stage: develop
+- started: 2026-05-09T19:00:00Z
+- updated: 2026-05-09T19:15:00Z
+- iterations: { develop: 1, review: 0, test: 0 }
+- summary: Admin-only enrollment creation (POST /manual, POST /bulk CSV, GET /csv-template) with webhook integration
+- artifacts: src/modules/adminEnrollments/*, src/config/constants.js, src/prisma/seed.js, src/app.js, tests/adminEnrollments/adminEnrollment.service.test.js
+- notes:
+  - 2026-05-09T19:15:00Z developer: iteration 1 complete — 4 new files, 3 modified, multer + csv-parse installed, 7/7 new tests pass, 54 total tests all pass
+
 ## T-2026-011 -- Phase 3B: Admin frontend adapter endpoints
 - status: done
 - stage: complete
