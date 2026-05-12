@@ -78,6 +78,7 @@ async function createEnrollment(body, traceId) {
 
   // Deduplicate concurrent/duplicate submissions within a 5-min window.
   // Edge case #10: return the existing record rather than creating a ghost.
+  // This makes double-click / network-retry submissions idempotent.
   const existing = await repo.findRecentDuplicate(email, phoneNumber);
   if (existing) {
     logger.info({
@@ -89,15 +90,37 @@ async function createEnrollment(body, traceId) {
     return { enrollment: existing, created: false };
   }
 
+  // Hard email uniqueness: outside the dedup window, reject any second
+  // enrollment that reuses an email already on an active (non-deleted)
+  // record. Applies to the public website flow only — admin manual/bulk
+  // paths enforce the same rule in adminEnrollment.service.js.
+  const existingByEmail = await repo.findActiveByEmail(email);
+  if (existingByEmail) {
+    logger.warn({
+      msg: 'enrollment_email_already_exists',
+      traceId,
+      existing_enrollment_id: existingByEmail.id,
+      email: maskEmail(email),
+    });
+    throw new ApiError(
+      409,
+      'EMAIL_ALREADY_ENROLLED',
+      'An enrollment with this email already exists. Please use a different email or contact support if you need help.',
+    );
+  }
+
   let enrollmentData;
 
   if (isNewShape(body)) {
-    // Defense-in-depth: re-validate the promo code even though the frontend
-    // pre-validates. This prevents a malicious client from bypassing the check.
-    const promoMatch = await findActivePromoCode(body.promoCode || '');
-    if (!promoMatch) {
-      logger.warn({ msg: 'enrollment_promo_code_invalid', traceId, email: maskEmail(email) });
-      throw new ApiError(400, 'PROMO_CODE_INVALID', 'Invalid or inactive promo code.');
+    // Promo code is optional. When provided, defense-in-depth re-validates
+    // against the DB so a malicious client can't bypass the (now-optional)
+    // frontend check. When absent (public website flow), skip the lookup.
+    if (body.promoCode) {
+      const promoMatch = await findActivePromoCode(body.promoCode);
+      if (!promoMatch) {
+        logger.warn({ msg: 'enrollment_promo_code_invalid', traceId, email: maskEmail(email) });
+        throw new ApiError(400, 'PROMO_CODE_INVALID', 'Invalid or inactive promo code.');
+      }
     }
 
     // ---- New frontend shape ----
@@ -126,8 +149,8 @@ async function createEnrollment(body, traceId) {
       education: body.education || null,
       readiness: body.readiness || null,
       source: body.source || null,
-      // Promo code — store the normalised (uppercase, trimmed) value
-      promo_code: (body.promoCode || '').trim().toUpperCase(),
+      // Promo code — store the normalised value when provided, null otherwise
+      promo_code: body.promoCode ? body.promoCode.trim().toUpperCase() : null,
     };
   } else {
     // ---- Legacy shape — unchanged behaviour ----

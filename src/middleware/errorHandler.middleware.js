@@ -26,7 +26,21 @@ function errorHandler(err, req, res, _next) {
     return sendError(res, err.statusCode, err.code, err.message, traceId, err.details);
   }
 
-  // Prisma unique constraint violation
+  // Prisma — connectivity / engine errors (return 503 with a clearer hint than
+  // the generic 500. These typically mean the DB is down or the connection
+  // dropped mid-query.)
+  if (err instanceof Prisma.PrismaClientInitializationError) {
+    logger.error({ msg: 'prisma_init_error', traceId, code: err.errorCode, error: err.message });
+    return sendError(
+      res,
+      HTTP.SERVICE_UNAVAILABLE ?? 503,
+      ERROR_CODES.SERVICE_UNAVAILABLE ?? 'SERVICE_UNAVAILABLE',
+      'Database is currently unreachable. Please try again in a moment.',
+      traceId,
+    );
+  }
+
+  // Prisma unique / not-found / connectivity errors (known request errors).
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {
       const field = err.meta?.target?.join(', ') || 'field';
@@ -37,6 +51,30 @@ function errorHandler(err, req, res, _next) {
       logger.warn({ msg: 'prisma_not_found', traceId });
       return sendError(res, HTTP.NOT_FOUND, ERROR_CODES.NOT_FOUND, 'Record not found', traceId);
     }
+    // P1001: Can't reach database server, P1002: timed out, P1008: timeout,
+    // P1017: server closed connection, P2024: pool timeout
+    if (['P1001', 'P1002', 'P1008', 'P1017', 'P2024'].includes(err.code)) {
+      logger.error({ msg: 'prisma_connectivity_error', traceId, code: err.code, error: err.message });
+      return sendError(
+        res,
+        HTTP.SERVICE_UNAVAILABLE ?? 503,
+        ERROR_CODES.SERVICE_UNAVAILABLE ?? 'SERVICE_UNAVAILABLE',
+        `Database connectivity error (${err.code}). The server may be restarting — please retry.`,
+        traceId,
+      );
+    }
+  }
+
+  // Prisma — connection thrown without code (rare; surfaces as PrismaClientRustPanicError or similar)
+  if (err instanceof Prisma.PrismaClientRustPanicError || err instanceof Prisma.PrismaClientUnknownRequestError) {
+    logger.error({ msg: 'prisma_engine_error', traceId, error: err.message });
+    return sendError(
+      res,
+      HTTP.SERVICE_UNAVAILABLE ?? 503,
+      ERROR_CODES.SERVICE_UNAVAILABLE ?? 'SERVICE_UNAVAILABLE',
+      'Database engine error. Please retry.',
+      traceId,
+    );
   }
 
   // Prisma validation errors (bad data shape reaching the ORM)

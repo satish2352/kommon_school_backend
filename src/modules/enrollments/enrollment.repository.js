@@ -30,6 +30,24 @@ async function createEnrollment(data) {
   return getDb().enrollment.create({ data });
 }
 
+/**
+ * Find any active (non-deleted) enrollment for the given email.
+ * Used to enforce hard email uniqueness across all enrollment paths
+ * (public website, admin manual, admin bulk CSV).
+ *
+ * Email is normalised to lowercase by the Joi validator on both shapes,
+ * so a direct equality match is safe.
+ */
+async function findActiveByEmail(email) {
+  return getDb().enrollment.findFirst({
+    where: {
+      email,
+      deleted_at: null,
+    },
+    orderBy: { created_at: 'desc' },
+  });
+}
+
 async function findEnrollmentById(id) {
   return getDb().enrollment.findFirst({
     where: { id, deleted_at: null },
@@ -59,6 +77,7 @@ async function updateEnrollmentStatus(id, status) {
 
 module.exports = {
   findRecentDuplicate,
+  findActiveByEmail,
   createEnrollment,
   findEnrollmentById,
   listEnrollments,

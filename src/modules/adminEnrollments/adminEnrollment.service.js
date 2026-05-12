@@ -150,6 +150,31 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
   let enrollment;
 
   await db.$transaction(async (tx) => {
+    // 0. Email uniqueness — reject if this email is already on an active
+    //    (non-deleted) enrollment. Same rule the public website endpoint
+    //    enforces in enrollment.service.js. Checked inside the transaction
+    //    to minimise the race window vs concurrent admin submissions.
+    const emailLower = String(data.email || '').trim().toLowerCase();
+    if (emailLower) {
+      const existingByEmail = await tx.enrollment.findFirst({
+        where: { email: emailLower, deleted_at: null },
+        select: { id: true, enrollment_code: true },
+      });
+      if (existingByEmail) {
+        logger.warn({
+          msg: 'admin_enrollment_email_already_exists',
+          traceId,
+          existing_enrollment_id: existingByEmail.id,
+          existing_enrollment_code: existingByEmail.enrollment_code,
+        });
+        throw new ApiError(
+          409,
+          'EMAIL_ALREADY_ENROLLED',
+          'An enrollment with this email already exists.',
+        );
+      }
+    }
+
     // 1. Resolve planPricingId from (planTier, durationMonths)
     const planPricing = await tx.planPricing.findFirst({
       where: {

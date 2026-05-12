@@ -8,7 +8,7 @@ const Joi = require('joi');
  */
 const manualEnrollmentSchema = Joi.object({
   name: Joi.string().trim().min(2).max(200).required(),
-  email: Joi.string().email().required(),
+  email: Joi.string().email().lowercase().trim().max(255).required(),
   phone: Joi.string().pattern(/^\d{10}$/).required().messages({
     'string.pattern.base': 'phone must be exactly 10 digits',
   }),

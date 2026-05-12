@@ -41,9 +41,11 @@ const newEnrollmentSchema = Joi.object({
   source: Joi.string()
     .valid('SOCIAL_MEDIA', 'COLLEGE', 'FRIEND', 'GOOGLE', 'OTHER')
     .optional(),
-  // promoCode — required for new-shape enrollments; Joi trims + uppercases
-  // before the service receives it, providing a single normalisation point.
-  promoCode: Joi.string().trim().uppercase().min(2).max(50).required(),
+  // promoCode — optional. The public website form no longer collects a
+  // promo code; admin/internal flows may still pass one. When present, Joi
+  // trims + uppercases before the service receives it (single normalisation
+  // point); when absent, the service skips the promo-code lookup entirely.
+  promoCode: Joi.string().trim().uppercase().min(2).max(50).optional(),
   // idempotencyKey is handled at the HTTP layer; strip it here so it is not
   // passed to the service or stored in the database.
   idempotencyKey: Joi.string().optional(),
@@ -61,7 +63,7 @@ const createEnrollmentSchema = Joi.alternatives()
     'alternatives.match':
       'Request body must match either the legacy enrollment shape ' +
       '(first_name, last_name, phone_number, plan, group, unit, phase, segment, amount) ' +
-      'or the new shape (name, phone, email, role)',
+      'or the new shape (name, phone, email, role; education/readiness/source/promoCode optional)',
   });
 
 // ---------------------------------------------------------------------------

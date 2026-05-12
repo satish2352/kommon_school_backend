@@ -91,21 +91,9 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     amountRupees = Math.round((amount ?? 0) / 100);
   }
 
-  // Build the plan block from the enrollment's plan_pricing relation (if selected).
-  // Requires enrollment to be loaded with: include: { plan_pricing: { include: { plan: true } } }
-  const planPricing = enrollment?.plan_pricing;
-  const planBlock = planPricing ? {
-    id:              planPricing.plan?.id ?? null,
-    tier:            planPricing.plan?.tier ?? null,
-    name:            planPricing.plan?.name ?? null,
-    promoCode:       planPricing.plan?.promoCode ?? null,
-    durationMonths:  planPricing.durationMonths,
-    basePrice:       Number(planPricing.basePrice),
-    discountPercent: Number(planPricing.discountPercent),
-    finalPrice:      Number(planPricing.finalPrice),
-    discountLabel:   planPricing.discountLabel ?? null,
-  } : null;
-
+  // Webhook payload — exactly 11 keys, nothing else. Downstream consumers
+  // depend on this exact shape; do not add new top-level keys without
+  // coordinating with them.
   return {
     firstName,
     lastName,
@@ -118,10 +106,6 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     segment:       'enterprise',
     transactionId,
     amount:        amountRupees,
-    // Subscription plan block — null when no plan was selected (legacy enrollments).
-    // Note: top-level 'plan' is already used for the legacy 'SUMAGO30' string field,
-    // so this block is exposed as 'planSelection' for consumers.
-    planSelection: planBlock,
   };
 }
 
