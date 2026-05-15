@@ -46,25 +46,54 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-app.use(helmet());
+// Helmet, with crossOriginResourcePolicy disabled — the default `same-origin`
+// value can confuse browsers that have a cached cross-origin response.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }),
+);
 
 const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
+// Dev-friendly origin check: accept anything in CORS_ALLOWED_ORIGINS, plus any
+// http(s)://localhost:<port> and http(s)://127.0.0.1:<port> (covers Vite dev
+// running on 5173/5174/etc., admin dashboards, and curl/Postman with no Origin).
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (corsOrigins.includes(origin)) return true;
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
+  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+  return false;
+}
+
 const corsOptions = {
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // allow non-browser tools (curl, Postman)
-    if (corsOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error('Not allowed by CORS'));
-  },
+  origin: (origin, cb) =>
+    isAllowedOrigin(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS')),
   credentials: true,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'Idempotency-Key'],
   exposedHeaders: ['X-Trace-Id', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
+  optionsSuccessStatus: 204,
   maxAge: 0,
 };
+
+// Tell browsers NEVER to cache the preflight response. `Access-Control-Max-Age: 0`
+// alone is not always honoured by Chrome (it has a minimum cache time even at 0),
+// so we also set Cache-Control: no-store on OPTIONS responses. Set this BEFORE
+// the cors middleware so the headers are present when cors ends the OPTIONS request.
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+  }
+  next();
+});
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
