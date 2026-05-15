@@ -51,16 +51,21 @@ const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .map((o) => o.trim())
   .filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // allow non-browser tools (curl, Postman)
-      if (corsOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-  }),
-);
+const corsOptions = {
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // allow non-browser tools (curl, Postman)
+    if (corsOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'Idempotency-Key'],
+  exposedHeaders: ['X-Trace-Id', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
+  maxAge: 0,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(compression());
 app.use(requestLogger);
