@@ -73,8 +73,23 @@ async function getDurationMasterById(id, traceId) {
  * @returns {Promise<object>}
  */
 async function createDurationMaster(body, traceId) {
+  const trimmed = body.label.trim();
+
+  // Reject duplicate labels CASE-INSENSITIVELY — "3 Months" / "3 months" /
+  // "3 MONTHS" all collapse to the same logical record. The DB column is
+  // case-sensitive at the @unique level (Postgres default), so this is
+  // enforced in the service.
+  const existing = await repo.findDurationMasterByLabelInsensitive(trimmed);
+  if (existing) {
+    throw new ApiError(
+      HTTP.CONFLICT,
+      `A duration with this label already exists (stored as "${existing.label}")`,
+      'DURATION_LABEL_EXISTS',
+    );
+  }
+
   const data = {
-    label:     body.label.trim(),
+    label:     trimmed,
     sortOrder: body.sortOrder != null ? body.sortOrder : 0,
     status:    body.status || 'ACTIVE',
   };
@@ -84,8 +99,8 @@ async function createDurationMaster(body, traceId) {
     record = await repo.createDurationMaster(data);
   } catch (err) {
     if (err.code === 'P2002') {
-      const field = (err.meta?.target ?? []).join(', ') || 'label';
-      throw new ApiError(HTTP.CONFLICT, `Duplicate value: ${field} already exists`, 'CONFLICT');
+      // Defense-in-depth: DB unique constraint still catches the rare race.
+      throw new ApiError(HTTP.CONFLICT, 'A duration with this label already exists', 'DURATION_LABEL_EXISTS');
     }
     throw err;
   }
@@ -112,6 +127,20 @@ async function updateDurationMaster(id, body, traceId) {
   // Immutability guard — system-default rows cannot be modified
   assertNotSystemDefault(existing, 'Duration master record');
 
+  // If label is being changed, check uniqueness CASE-INSENSITIVELY against every
+  // OTHER row (excludeId=existing.id), so renaming to a case-variant of another
+  // existing record is rejected.
+  if (body.label !== undefined && body.label.trim().toLowerCase() !== existing.label.toLowerCase()) {
+    const conflict = await repo.findDurationMasterByLabelInsensitive(body.label.trim(), existing.id);
+    if (conflict) {
+      throw new ApiError(
+        HTTP.CONFLICT,
+        `A duration with this label already exists (stored as "${conflict.label}")`,
+        'DURATION_LABEL_EXISTS',
+      );
+    }
+  }
+
   const data = {};
   if (body.label     !== undefined) data.label     = body.label.trim();
   if (body.sortOrder !== undefined) data.sortOrder = body.sortOrder;
@@ -122,8 +151,7 @@ async function updateDurationMaster(id, body, traceId) {
     record = await repo.updateDurationMaster(id, data);
   } catch (err) {
     if (err.code === 'P2002') {
-      const field = (err.meta?.target ?? []).join(', ') || 'label';
-      throw new ApiError(HTTP.CONFLICT, `Duplicate value: ${field} already exists`, 'CONFLICT');
+      throw new ApiError(HTTP.CONFLICT, 'A duration with this label already exists', 'DURATION_LABEL_EXISTS');
     }
     throw err;
   }

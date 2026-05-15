@@ -29,6 +29,21 @@ async function findDurationMasterById(id) {
 }
 
 /**
+ * Find a duration master record by label, case-insensitively. Used to enforce
+ * case-insensitive uniqueness ("3 Months" / "3 months" / "3 MONTHS" all
+ * resolve to the same logical record).
+ *
+ * @param {string} label — already trimmed
+ * @param {number} [excludeId] — optional id to exclude (for update flows)
+ * @returns {Promise<object|null>}
+ */
+async function findDurationMasterByLabelInsensitive(label, excludeId) {
+  const where = { label: { equals: label, mode: 'insensitive' } };
+  if (excludeId != null) where.id = { not: excludeId };
+  return getDb().durationMaster.findFirst({ where });
+}
+
+/**
  * Insert a new duration master record.
  * @param {object} data
  * @returns {Promise<object>}
@@ -68,6 +83,7 @@ async function countCoursesByDurationId(id) {
 module.exports = {
   findDurationMasters,
   findDurationMasterById,
+  findDurationMasterByLabelInsensitive,
   createDurationMaster,
   updateDurationMaster,
   deleteDurationMaster,

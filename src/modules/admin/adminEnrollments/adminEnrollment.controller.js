@@ -31,6 +31,9 @@ const list = asyncHandler(async (req, res) => {
     education:  r.education   || null,
     readiness:  r.readiness   || null,
     source:     r.source      || null,
+    // Internal / External marker — populated on create; default 'EXTERNAL'
+    // for any pre-existing rows from before this column existed.
+    candidateType: r.candidate_type || 'EXTERNAL',
     status:     mapEnrollmentStatus(r.status),
     createdAt:  r.created_at,
     updatedAt:  r.updated_at,

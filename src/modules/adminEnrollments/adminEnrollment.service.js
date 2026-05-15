@@ -239,6 +239,10 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
         status: 'submitted',
         amount: amountPaise,
         plan_pricing_id: planPricing.id,
+        // Admin manual + bulk CSV are both INTERNAL by definition. The bulk
+        // path also routes through createManualEnrollment per row, so this
+        // single line marks both flows correctly.
+        candidate_type: 'INTERNAL',
       },
     });
 
@@ -263,6 +267,9 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
       amountPaise,
       actor_id: actor?.id,
     });
+  }, {
+    timeout: 15000, // bumped from 5s default — remote DB latency
+    maxWait: 5000,
   });
 
   // ---------------------------------------------------------------------------

@@ -80,6 +80,14 @@ const listEnrollmentQuerySchema = Joi.object({
     .optional(),
   dateFrom: Joi.date().iso().optional(),
   dateTo:   Joi.date().iso().min(Joi.ref('dateFrom')).optional(),
+  // Filter list by candidate origin. Frontend's Enrollments page sends this
+  // as `candidateType`; accept it via uppercase enum match.
+  candidateType: Joi.string().valid('INTERNAL', 'EXTERNAL').optional(),
+  // Frontend also sends `source` and `fromDate`/`toDate` as aliases for
+  // candidateType/dateFrom/dateTo respectively; accept those gracefully.
+  source:    Joi.string().valid('INTERNAL', 'EXTERNAL').optional(),
+  fromDate:  Joi.date().iso().optional(),
+  toDate:    Joi.date().iso().optional(),
 });
 
 // ---------------------------------------------------------------------------

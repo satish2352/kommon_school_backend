@@ -8,6 +8,7 @@
  */
 
 const webhookService = require('./webhook.service');
+const sumagoService  = require('./sumago.service');
 const { sendSuccess } = require('../../utils/ApiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const { HTTP } = require('../../config/constants');
@@ -49,4 +50,30 @@ const sendTest = asyncHandler(async (req, res) => {
   sendSuccess(res, HTTP.CREATED, delivery, 'Test webhook sent');
 });
 
-module.exports = { list, getById, stats, sendTest };
+// ---------------------------------------------------------------------------
+// GET /api/v1/webhooks/sumago/users
+// Proxies the Sumago "Retrieve User Data & Status" endpoint. The Sumago Bearer
+// token lives only on the backend (env var); the frontend never sees it.
+// ---------------------------------------------------------------------------
+
+const sumagoUsers = asyncHandler(async (req, res) => {
+  const data = await sumagoService.fetchUsers(req.traceId);
+  sendSuccess(res, HTTP.OK, data);
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/webhooks/sumago/config
+// Returns whether Sumago is configured (URL set + token set). NEVER returns
+// the token itself — used by the UI to show "configured / not configured".
+// ---------------------------------------------------------------------------
+
+const sumagoConfig = asyncHandler(async (req, res) => {
+  const { base, enabled } = sumagoService.getConfig();
+  sendSuccess(res, HTTP.OK, {
+    enabled,
+    baseUrl: base || null,
+    // intentionally omit token
+  });
+});
+
+module.exports = { list, getById, stats, sendTest, sumagoUsers, sumagoConfig };

@@ -25,9 +25,25 @@ const logger = require('../../config/logger');
 const { getPrismaClient } = require('../../config/database');
 const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.service');
 
-const WEBHOOK_URL =
-  process.env.ENROLLMENT_WEBHOOK_URL ||
-  'https://webhook.site/8012a95d-2521-4b64-b59f-1cbf3bd5e6e0';
+// ---------------------------------------------------------------------------
+// Destination resolution
+// ---------------------------------------------------------------------------
+// Priority order:
+//   1. SUMAGO_API_BASE_URL → POST <base>/integrations/provision-user with Bearer auth
+//   2. ENROLLMENT_WEBHOOK_URL → POST plain JSON, no auth (legacy)
+//   3. webhook.site fallback (dev/testing)
+//
+// Sumago path is preferred when both vars are present, since SUMAGO_API_TOKEN
+// adds authentication that ENROLLMENT_WEBHOOK_URL never had.
+// ---------------------------------------------------------------------------
+const SUMAGO_BASE  = (process.env.SUMAGO_API_BASE_URL || '').replace(/\/$/, '');
+const SUMAGO_TOKEN =  process.env.SUMAGO_API_TOKEN || '';
+const SUMAGO_ENABLED = Boolean(SUMAGO_BASE && SUMAGO_TOKEN);
+
+const WEBHOOK_URL = SUMAGO_ENABLED
+  ? `${SUMAGO_BASE}/integrations/provision-user`
+  : (process.env.ENROLLMENT_WEBHOOK_URL ||
+     'https://webhook.site/8012a95d-2521-4b64-b59f-1cbf3bd5e6e0');
 
 // Per-delivery HTTP timeout in milliseconds.
 // Prevents a slow webhook target from hanging indefinitely.
@@ -72,38 +88,42 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     razorpayPaymentId ||
     `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // Course-derived fields — sourced from CourseMaster when available, else dummies.
-  // Dummy fallback also applies per-field when the FK relation is null (e.g. a
-  // course without an assigned education or duration).
-  let group, unit, phase, amountRupees;
-  if (course) {
-    unit         = course.nameOfCourseAsGroup;
-    group        = course.education?.name ?? 'group_A';
-    phase        = course.duration?.label  ?? 'phase_2';
+  // Sumago expects fixed taxonomy values per organization (case-sensitive).
+  // These come from env (SUMAGO_GROUP / SUMAGO_UNIT / SUMAGO_PHASE) — NOT
+  // derived from CourseMaster — because Sumago's allowlist is org-wide, not
+  // per-course. amountRupees still uses courseFee when available so the value
+  // sent matches the actual course price.
+  const group = process.env.SUMAGO_GROUP || 'Engineering - UG';
+  const unit  = process.env.SUMAGO_UNIT  || 'B.Tech CSE';
+  const phase = process.env.SUMAGO_PHASE || 'Semester 1';
+
+  let amountRupees;
+  if (course && course.courseFee != null) {
     // courseFee is a Prisma Decimal stored as rupees — coerce to integer rupees.
     // Math.round handles both string "49999.00" and numeric representations.
     amountRupees = Math.round(Number(course.courseFee));
   } else {
-    // Fallback: dummy values + paise → rupees conversion (existing behavior)
-    unit         = 'unit_01';
-    group        = 'group_A';
-    phase        = 'phase_2';
+    // No matched course → convert order amount (paise) to rupees.
     amountRupees = Math.round((amount ?? 0) / 100);
   }
 
   // Webhook payload — exactly 11 keys, nothing else. Downstream consumers
   // depend on this exact shape; do not add new top-level keys without
   // coordinating with them.
+  //
+  // plan / group / unit / phase / segment are all read from env so they can
+  // be re-tuned per-organization without a code edit. Case-sensitive — Sumago
+  // matches the exact strings against their allowlist.
   return {
     firstName,
     lastName,
     email:         enrollment?.email ?? '',
     phoneNumber,
-    plan:          'SUMAGO30',
+    plan:          process.env.SUMAGO_PLAN_CODE || 'NOVA2025_30',
     group,
     unit,
     phase,
-    segment:       'enterprise',
+    segment:       process.env.SUMAGO_SEGMENT || 'A',
     transactionId,
     amount:        amountRupees,
   };
@@ -142,10 +162,17 @@ async function executeWebhookDelivery({ enrollment, payload, source = 'BACKEND',
   // Abort the fetch after WEBHOOK_DELIVERY_TIMEOUT_MS to avoid hanging on slow targets
   const timeoutId = setTimeout(() => controller.abort(), WEBHOOK_DELIVERY_TIMEOUT_MS);
 
+  // Build headers. Authorization is included only when Sumago is configured;
+  // the legacy webhook target has no auth requirement.
+  const fetchHeaders = { 'Content-Type': 'application/json' };
+  if (SUMAGO_ENABLED) {
+    fetchHeaders.Authorization = `Bearer ${SUMAGO_TOKEN}`;
+  }
+
   try {
     response = await fetch(WEBHOOK_URL, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: fetchHeaders,
       body:    JSON.stringify(payload),
       signal:  controller.signal,
     });

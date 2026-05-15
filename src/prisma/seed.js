@@ -37,6 +37,8 @@ const PERMISSION_DESCRIPTIONS = {
   [PERMISSIONS.PLANS_ENROLLMENTS_READ]: 'View enrollments for a specific plan',
   [PERMISSIONS.ENROLLMENTS_MANUAL_CREATE]: 'Create an enrollment manually without Razorpay payment',
   [PERMISSIONS.ENROLLMENTS_BULK_UPLOAD]:   'Upload a CSV to bulk-create enrollments',
+  [PERMISSIONS.INTERNAL_PLANS_VIEW]:   'View internal plans and their coupon/fee details',
+  [PERMISSIONS.INTERNAL_PLANS_MANAGE]: 'Create, update, and delete internal plans',
 };
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,8 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.PLANS_ENROLLMENTS_READ,
     PERMISSIONS.ENROLLMENTS_MANUAL_CREATE,
     PERMISSIONS.ENROLLMENTS_BULK_UPLOAD,
+    PERMISSIONS.INTERNAL_PLANS_VIEW,
+    PERMISSIONS.INTERNAL_PLANS_MANAGE,
   ],
   marketing: [
     PERMISSIONS.FOLLOWUPS_VIEW,

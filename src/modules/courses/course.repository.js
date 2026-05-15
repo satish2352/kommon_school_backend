@@ -6,14 +6,15 @@ function getDb() {
   return getPrismaClient();
 }
 
-// Include education and duration relations in every course read.
+// Include education, duration, and courseName relations in every course read.
 const COURSE_INCLUDE = {
-  education: true,
-  duration:  true,
+  education:  true,
+  duration:   true,
+  courseName: true,
 };
 
 /**
- * Paginated list of courses (with education + duration relations).
+ * Paginated list of courses (with education + duration + courseName relations).
  * @param {{ skip: number, take: number, where: object, orderBy: object }} opts
  * @returns {Promise<{ rows: object[], total: number }>}
  */
@@ -26,7 +27,7 @@ async function findCourses({ skip, take, where, orderBy }) {
 }
 
 /**
- * Find a single course by integer PK (with education + duration relations).
+ * Find a single course by integer PK (with education + duration + courseName relations).
  * @param {number} id
  * @returns {Promise<object|null>}
  */
@@ -35,7 +36,20 @@ async function findCourseById(id) {
 }
 
 /**
- * Insert a new course record (with education + duration relations).
+ * Find a course by the unique (courseNameId, durationId) composite key.
+ * Used for duplicate-offering detection.
+ * @param {number} courseNameId
+ * @param {number|null} durationId
+ * @returns {Promise<object|null>}
+ */
+async function findCourseByNameDuration(courseNameId, durationId) {
+  return getDb().courseMaster.findFirst({
+    where: { courseNameId, durationId: durationId ?? null },
+  });
+}
+
+/**
+ * Insert a new course record (with education + duration + courseName relations).
  * @param {object} data
  * @returns {Promise<object>}
  */
@@ -44,7 +58,7 @@ async function createCourse(data) {
 }
 
 /**
- * Update an existing course (with education + duration relations).
+ * Update an existing course (with education + duration + courseName relations).
  * @param {number} id
  * @param {object} data
  * @returns {Promise<object>}
@@ -65,6 +79,7 @@ async function deleteCourse(id) {
 module.exports = {
   findCourses,
   findCourseById,
+  findCourseByNameDuration,
   createCourse,
   updateCourse,
   deleteCourse,

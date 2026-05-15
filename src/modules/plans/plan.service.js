@@ -172,6 +172,9 @@ async function create(body, traceId) {
       where: { id: created.id },
       include: { pricings: { orderBy: { durationMonths: 'asc' } } },
     });
+  }, {
+    timeout: 15000, // bumped from 5s default — remote DB latency
+    maxWait: 5000,
   });
 
   logger.info({ msg: 'plan_created', traceId, plan_id: plan.id, tier: plan.tier });
@@ -369,6 +372,10 @@ async function selectForEnrollment(enrollmentId, planPricingId, traceId) {
     const enrollment = await tx.enrollment.findUnique({
       where: { id: enrollmentId },
     });
+    // (timeout option passed to $transaction below — bumped from Prisma's 5s
+    // default to 15s because the remote dev DB at 13.48.254.211 sometimes adds
+    // ~3-6s of network latency per round-trip, and this transaction does 4
+    // sequential round-trips: find enrollment → count payments → find pricing → update)
     if (!enrollment || enrollment.deleted_at !== null) {
       logger.warn({ msg: 'plan_select_enrollment_not_found', traceId, enrollment_id: enrollmentId });
       throw ApiError.notFound('Enrollment not found');
@@ -425,6 +432,9 @@ async function selectForEnrollment(enrollmentId, planPricingId, traceId) {
         },
       },
     });
+  }, {
+    timeout:       15000, // 15s — see comment above. Default is 5000.
+    maxWait:       5000,  // wait up to 5s to acquire a connection from pool
   });
 
   logger.info({

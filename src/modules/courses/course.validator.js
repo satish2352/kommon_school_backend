@@ -3,10 +3,13 @@
 const Joi = require('joi');
 
 // ---------------------------------------------------------------------------
-// Create schema — all required fields must be present
+// Create schema — accepts either courseNameId (new) or nameOfCourseAsGroup (legacy)
 // ---------------------------------------------------------------------------
 const createCourseSchema = Joi.object({
-  nameOfCourseAsGroup: Joi.string().trim().min(2).max(200).required(),
+  // New normalized path: provide the ID of the CourseNameMaster row
+  courseNameId:        Joi.number().integer().positive().optional(),
+  // Legacy / convenience path: provide the name as a string; service upserts it
+  nameOfCourseAsGroup: Joi.string().trim().min(2).max(200).optional(),
   courseFee:           Joi.number().min(0).max(9999999.99).precision(2).required(),
   coupon:              Joi.string().trim().uppercase().max(50).optional().allow('', null),
   description:         Joi.string().max(2000).optional().allow('', null),
@@ -14,12 +17,15 @@ const createCourseSchema = Joi.object({
   educationId:         Joi.number().integer().positive().optional().allow(null),
   durationId:          Joi.number().integer().positive().optional().allow(null),
   isSystemDefault:     Joi.forbidden(),
-});
+})
+// At least one of courseNameId / nameOfCourseAsGroup must be present
+.or('courseNameId', 'nameOfCourseAsGroup');
 
 // ---------------------------------------------------------------------------
 // Update schema — all fields optional; same rules when present
 // ---------------------------------------------------------------------------
 const updateCourseSchema = Joi.object({
+  courseNameId:        Joi.number().integer().positive().optional(),
   nameOfCourseAsGroup: Joi.string().trim().min(2).max(200).optional(),
   courseFee:           Joi.number().min(0).max(9999999.99).precision(2).optional(),
   coupon:              Joi.string().trim().uppercase().max(50).optional().allow('', null),
