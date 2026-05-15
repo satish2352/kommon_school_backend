@@ -151,6 +151,9 @@ async function createEnrollment(body, traceId) {
       source: body.source || null,
       // Promo code — store the normalised value when provided, null otherwise
       promo_code: body.promoCode ? body.promoCode.trim().toUpperCase() : null,
+      // Public website flow → EXTERNAL candidate by definition. (Schema default
+      // is also EXTERNAL, but being explicit makes intent obvious to readers.)
+      candidate_type: 'EXTERNAL',
     };
   } else {
     // ---- Legacy shape — unchanged behaviour ----
@@ -215,6 +218,27 @@ async function listEnrollments(query, traceId) {
 
   if (query.status) where.status = query.status;
 
+  // Server-side candidate-type filter. Accept INTERNAL / EXTERNAL (case-
+  // insensitive on the wire). Frontend sends `candidateType` AND the legacy
+  // `source` alias with the same value; either one wins. Any other value is
+  // ignored so a malformed query param doesn't accidentally hide rows.
+  const candidateTypeRaw = query.candidateType ?? query.source;
+  if (candidateTypeRaw) {
+    const v = String(candidateTypeRaw).toUpperCase();
+    if (v === 'INTERNAL' || v === 'EXTERNAL') where.candidate_type = v;
+  }
+
+  // Date-range aliases: frontend sends `fromDate` / `toDate`. Treat them as
+  // additive to dateFrom/dateTo (whichever is set wins, both are end-of-day-
+  // inclusive at the frontend layer).
+  const rangeFrom = dateFrom ?? (query.fromDate ? new Date(query.fromDate) : null);
+  const rangeTo   = dateTo   ?? (query.toDate   ? new Date(`${query.toDate}T23:59:59.999`) : null);
+  if (rangeFrom || rangeTo) {
+    where.created_at = where.created_at || {};
+    if (rangeFrom) where.created_at.gte = rangeFrom;
+    if (rangeTo)   where.created_at.lte = rangeTo;
+  }
+
   if (query.search) {
     const term = query.search.trim();
     where.OR = [
@@ -225,12 +249,8 @@ async function listEnrollments(query, traceId) {
       { phone_number: { contains: term } },
     ];
   }
-
-  if (dateFrom || dateTo) {
-    where.created_at = {};
-    if (dateFrom) where.created_at.gte = dateFrom;
-    if (dateTo)   where.created_at.lte = dateTo;
-  }
+  // (dateFrom / dateTo handling moved up next to candidate_type filter so the
+  // `fromDate` / `toDate` aliases from the frontend Enrollments page are honoured.)
 
   const { rows, total } = await repo.listEnrollments({
     skip,

@@ -9,12 +9,15 @@ const { getRedis } = require('../config/redis');
  * blocking commands (BRPOP / BLMOVE) do not hit the ioredis 3-attempt
  * default and throw. This is already set in getRedis().
  *
- * Both Queue and Worker accept a `{ client }` option that wraps an existing
- * ioredis instance, avoiding the need to create separate connections for
- * each BullMQ entity (saves file descriptors in high-concurrency deployments).
+ * BullMQ v5 expects either a raw IORedis instance OR a connection-options
+ * object (with `host`, `port`, etc). The legacy `{ client: ... }` shape was
+ * from BullMQ v3 — when passed to v5, BullMQ does not recognise it and
+ * falls back to defaults (localhost:6379) when duplicating the connection
+ * for blocking commands. Returning the IORedis instance directly fixes the
+ * "connect ECONNREFUSED 127.0.0.1:6379" noise from worker.on('error').
  */
 function getQueueConnection() {
-  return { client: getRedis() };
+  return getRedis();
 }
 
 module.exports = { getQueueConnection };

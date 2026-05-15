@@ -89,6 +89,14 @@ enum EnrollmentSource {
   OTHER
 }
 
+// Marks where the enrollment originated:
+//   - INTERNAL: admin manual + bulk CSV (admin-driven)
+//   - EXTERNAL: public website "Enroll Now" flow
+enum CandidateType {
+  INTERNAL
+  EXTERNAL
+}
+
 enum CourseStatus {
   ACTIVE
   INACTIVE
@@ -106,6 +114,18 @@ enum PlanTier {
 }
 
 enum PlanStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum InternalPlanDuration {
+  ONE_MONTH    @map("1_MONTH")
+  THREE_MONTHS @map("3_MONTHS")
+  SIX_MONTHS   @map("6_MONTHS")
+  TWELVE_MONTHS @map("12_MONTHS")
+}
+
+enum InternalPlanStatus {
   ACTIVE
   INACTIVE
 }
@@ -174,6 +194,10 @@ model Enrollment {
   readiness       Readiness?
   source          EnrollmentSource?
   promo_code      String?             @db.VarChar(50)
+  // Origin marker — INTERNAL for admin manual/bulk, EXTERNAL for public website.
+  // Defaults to EXTERNAL so any future caller that forgets to set it doesn't
+  // accidentally mark a record as INTERNAL.
+  candidate_type  CandidateType?      @default(EXTERNAL)
 
   plan_pricing_id Int?
   plan_pricing    PlanPricing? @relation("EnrollmentPlanPricing", fields: [plan_pricing_id], references: [id], onDelete: SetNull)
@@ -339,11 +363,19 @@ model CourseMaster {
   durationId          Int?             @map("duration_id")
   duration            DurationMaster?  @relation(fields: [durationId], references: [id], onDelete: Restrict)
 
+  // FK: course name master (normalized name lookup)
+  courseNameId        Int              @map("course_name_id")
+  courseName          CourseNameMaster @relation(fields: [courseNameId], references: [id], onDelete: Restrict)
+
+  internalPlans       InternalPlan[]
+
   @@map("course_master")
+  @@unique([courseNameId, durationId], name: "course_master_name_duration_unique")
   @@index([status])
   @@index([nameOfCourseAsGroup])
   @@index([educationId])
   @@index([durationId])
+  @@index([courseNameId])
 }
 
 model EducationMaster {
@@ -359,6 +391,22 @@ model EducationMaster {
   courses     CourseMaster[]
 
   @@map("education_master")
+  @@index([status])
+  @@index([name])
+}
+
+model CourseNameMaster {
+  id              Int          @id @default(autoincrement())
+  name            String       @unique @db.VarChar(200)
+  description     String?      @db.Text
+  status          MasterStatus @default(ACTIVE)
+  isSystemDefault Boolean      @default(false) @map("is_system_default")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt      @map("updated_at")
+
+  courses CourseMaster[]
+
+  @@map("course_name_master")
   @@index([status])
   @@index([name])
 }
@@ -439,6 +487,28 @@ model PlanPricing {
   @@unique([planId, durationMonths])
   @@map("plan_pricing")
   @@index([status])
+}
+
+model InternalPlan {
+  id          Int                  @id @default(autoincrement())
+  refId       String               @unique @map("ref_id") @db.VarChar(80)
+  name        String               @db.VarChar(200)
+  duration    InternalPlanDuration
+  description String?              @db.Text
+  status      InternalPlanStatus   @default(ACTIVE)
+
+  courseId    Int                  @map("course_id")
+  course      CourseMaster         @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  coupons     Json                 @default("[]")
+
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  @@map("internal_plans")
+  @@index([status])
+  @@index([courseId])
+  @@index([name])
 }
 
 model Permission {

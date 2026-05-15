@@ -91,8 +91,9 @@ async function settlePayment({ paymentId, razorpayPaymentId, razorpaySignature, 
       return { alreadySettled: false };
     },
     {
-      // Edge case #13: bound transaction lifetime to prevent long-running locks
-      timeout: 10000,
+      // Edge case #13: bound transaction lifetime to prevent long-running locks.
+      // Bumped from 10s to 15s — remote dev DB (13.48.254.211) adds round-trip latency.
+      timeout: 15000,
       // Serializable isolation for financial writes
       isolationLevel: 'Serializable',
     },

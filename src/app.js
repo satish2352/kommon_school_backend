@@ -38,6 +38,8 @@ const webhookAdminRoutes = require('./modules/webhooks/webhook.routes');
 const plansPublicRoutes = require('./modules/plans/plan.public.routes');
 const plansAdminRoutes = require('./modules/plans/plan.admin.routes');
 const adminEnrollmentManualRoutes = require('./modules/adminEnrollments/adminEnrollment.routes');
+const internalPlansRoutes = require('./modules/internalPlans/internalPlan.routes');
+const courseNameRoutes = require('./modules/courseNameMaster/courseName.routes');
 
 const app = express();
 
@@ -122,6 +124,10 @@ app.use('/api/v1/admin/plans', plansAdminRoutes);
 // Admin webhook delivery history — mounted AFTER the raw Razorpay handler above
 // so /api/v1/webhooks/razorpay (app.post, line ~80) is not shadowed by this router.
 app.use('/api/v1/webhooks', webhookAdminRoutes);
+// Internal Plans admin CRUD + coupon/fee utilities
+app.use('/api/v1/admin/internal-plans', internalPlansRoutes);
+// Course Name Master CRUD
+app.use('/api/v1/admin/course-names', courseNameRoutes);
 
 app.use((req, res) => {
   return sendError(

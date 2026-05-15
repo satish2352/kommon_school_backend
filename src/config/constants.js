@@ -134,5 +134,8 @@ module.exports = Object.freeze({
     // Admin Enrollments
     ENROLLMENTS_MANUAL_CREATE: 'enrollments:manual:create',
     ENROLLMENTS_BULK_UPLOAD:   'enrollments:bulk:upload',
+    // Internal Plans
+    INTERNAL_PLANS_VIEW:   'internal_plans:view',
+    INTERNAL_PLANS_MANAGE: 'internal_plans:manage',
   },
 });

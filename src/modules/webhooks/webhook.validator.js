@@ -39,6 +39,10 @@ const planSelectionSchema = Joi.object({
 }).allow(null).optional();
 
 const sendTestSchema = Joi.object({
+  // Optional top-level plan code (e.g. "SUMAGO30"). Mirrors the `plan` field
+  // in the outgoing webhook payload — exposed in the sample so admins can
+  // visibly verify what is being sent.
+  plan: Joi.string().optional().allow('', null),
   enrollment: Joi.object({
     id:           Joi.string().optional().allow('', null),
     enrollmentId: Joi.string().optional().allow('', null),

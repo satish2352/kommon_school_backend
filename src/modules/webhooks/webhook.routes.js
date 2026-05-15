@@ -50,4 +50,18 @@ router.post(
   controller.sendTest,
 );
 
+// GET /api/v1/webhooks/sumago/config — is Sumago configured? (no token leak)
+router.get(
+  '/sumago/config',
+  hasPermission(PERMISSIONS.WEBHOOKS_VIEW),
+  controller.sumagoConfig,
+);
+
+// GET /api/v1/webhooks/sumago/users — proxy to Sumago GET /integrations/get-users
+router.get(
+  '/sumago/users',
+  hasPermission(PERMISSIONS.WEBHOOKS_VIEW),
+  controller.sumagoUsers,
+);
+
 module.exports = router;

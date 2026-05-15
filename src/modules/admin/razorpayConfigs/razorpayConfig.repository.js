@@ -61,6 +61,9 @@ async function setActiveConfig(id) {
       data: { is_active: true },
       select: SAFE_SELECT,
     });
+  }, {
+    timeout: 15000, // bumped from 5s default — remote DB latency
+    maxWait: 5000,
   });
 }
 
