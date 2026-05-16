@@ -3,12 +3,44 @@
 const Joi = require('joi');
 
 // ---------------------------------------------------------------------------
+// Shared field-level regexes
+//
+// These mirror src/services/validation.js on the frontend so the same
+// rule is enforced on both sides. Backend is the authoritative gate —
+// any rule change must land here first, frontend second.
+// ---------------------------------------------------------------------------
+
+// Name: ASCII letters joined by single spaces. Indian student names in
+// Latin script never need digits or symbols; rejecting them stops bot
+// junk like "test123" / "abc@@" from polluting the DB.
+const NAME_REGEX = /^[A-Za-z]+(?: [A-Za-z]+)*$/;
+
+// Indian mobile: 10 digits, leading digit in 6-9. TRAI reserves leading
+// 0-5 for landline / unassigned ranges, so a "5…" number is a typo or
+// abuse signal.
+const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
+
+// Strict email: local@domain.tld with TLD >= 2 chars. Joi's built-in
+// .email() validator does most of this, but a belt-and-suspenders
+// .pattern() also rejects "test@gmail.c" (1-char TLD) regardless of
+// Joi's TLD list state.
+const EMAIL_REGEX =
+  /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$/;
+
+// ---------------------------------------------------------------------------
 // Legacy shape — admin/internal callers that pass the full snake_case payload
 // ---------------------------------------------------------------------------
 const legacyEnrollmentSchema = Joi.object({
   first_name:   Joi.string().trim().min(1).max(100).required(),
   last_name:    Joi.string().trim().min(1).max(100).required(),
-  email:        Joi.string().email().lowercase().trim().max(255).required(),
+  email:        Joi.string()
+    .email()
+    .lowercase()
+    .trim()
+    .max(255)
+    .pattern(EMAIL_REGEX)
+    .required()
+    .messages({ 'string.pattern.base': 'email must be a valid email address' }),
   phone_number: Joi.string()
     .pattern(/^\+?[1-9]\d{7,14}$/)
     .required()
@@ -25,16 +57,46 @@ const legacyEnrollmentSchema = Joi.object({
 // New (frontend) shape — React enrollment modal
 // ---------------------------------------------------------------------------
 const newEnrollmentSchema = Joi.object({
-  name:  Joi.string().trim().min(2).max(200).required(),
-  phone: Joi.string().pattern(/^\d{10}$/).required()
-    .messages({ 'string.pattern.base': 'phone must be exactly 10 digits' }),
-  email: Joi.string().email().lowercase().trim().max(255).required(),
+  name:  Joi.string()
+    .trim()
+    .min(2)
+    .max(100)
+    .pattern(NAME_REGEX)
+    .required()
+    .messages({
+      'string.pattern.base': 'name must contain letters and spaces only',
+      'string.min':          'name must be at least 2 characters',
+      'string.max':          'name must be 100 characters or less',
+    }),
+  phone: Joi.string()
+    .pattern(INDIAN_MOBILE_REGEX)
+    .required()
+    .messages({
+      'string.pattern.base':
+        'phone must be a 10-digit Indian mobile number starting with 6, 7, 8, or 9',
+    }),
+  email: Joi.string()
+    .email()
+    .lowercase()
+    .trim()
+    .max(255)
+    .pattern(EMAIL_REGEX)
+    .required()
+    .messages({ 'string.pattern.base': 'email must be a valid email address' }),
   role:  Joi.string()
     .valid('STUDENT', 'FRESH_GRADUATE', 'WORKING_PROFESSIONAL', 'CAREER_SWITCHER')
     .required(),
+  // Education is required on the public website flow — mirrors the
+  // frontend gate added at the same time. Pre-existing enrollments
+  // may still have NULL education in the DB (column is nullable), so
+  // we only enforce this on NEW submissions, not on schema migration.
   education: Joi.string()
     .valid('SCHOOL', 'JR_COLLEGE', 'UNDERGRADUATE', 'GRADUATE', 'POST_GRADUATE', 'DOCTORATE', 'OTHER')
-    .optional(),
+    .required()
+    .messages({
+      'any.required': 'education is required',
+      'any.only':     'education must be one of SCHOOL, JR_COLLEGE, UNDERGRADUATE, GRADUATE, POST_GRADUATE, DOCTORATE, OTHER',
+    }),
   readiness: Joi.string()
     .valid('BEGINNER', 'INTERMEDIATE', 'READY_FOR_INTERVIEW')
     .optional(),

@@ -2,15 +2,41 @@
 
 const Joi = require('joi');
 
+// Same regex set as the public-flow validator (kept inline here rather
+// than imported to avoid coupling admin paths to the public module).
+const NAME_REGEX = /^[A-Za-z]+(?: [A-Za-z]+)*$/;
+const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
+const EMAIL_REGEX =
+  /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$/;
+
 /**
  * Shared schema for a single manual enrollment row.
  * Used by both the manual endpoint and CSV bulk processing.
+ *
+ * Rules mirror the public newEnrollmentSchema so an admin can't bypass
+ * the data-quality checks the public flow enforces.
  */
 const manualEnrollmentSchema = Joi.object({
-  name: Joi.string().trim().min(2).max(200).required(),
-  email: Joi.string().email().lowercase().trim().max(255).required(),
-  phone: Joi.string().pattern(/^\d{10}$/).required().messages({
-    'string.pattern.base': 'phone must be exactly 10 digits',
+  name: Joi.string()
+    .trim()
+    .min(2)
+    .max(100)
+    .pattern(NAME_REGEX)
+    .required()
+    .messages({
+      'string.pattern.base': 'name must contain letters and spaces only',
+    }),
+  email: Joi.string()
+    .email()
+    .lowercase()
+    .trim()
+    .max(255)
+    .pattern(EMAIL_REGEX)
+    .required()
+    .messages({ 'string.pattern.base': 'email must be a valid email address' }),
+  phone: Joi.string().pattern(INDIAN_MOBILE_REGEX).required().messages({
+    'string.pattern.base':
+      'phone must be a 10-digit Indian mobile number starting with 6, 7, 8, or 9',
   }),
   role: Joi.string()
     .valid('STUDENT', 'FRESH_GRADUATE', 'WORKING_PROFESSIONAL', 'CAREER_SWITCHER')

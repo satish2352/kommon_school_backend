@@ -64,6 +64,13 @@ module.exports = Object.freeze({
     CONFLICT: 'CONFLICT',
     PAYMENT_AMOUNT_MISMATCH: 'PAYMENT_AMOUNT_MISMATCH',
     PAYMENT_ALREADY_COMPLETED: 'PAYMENT_ALREADY_COMPLETED',
+    // Returned by POST /enrollments when the email is already attached to an
+    // enrollment whose payment has settled successfully (status paid /
+    // sync_pending / completed, or any Payment row with status=success).
+    // Distinct from EMAIL_ALREADY_ENROLLED (legacy code) so the frontend can
+    // render a "Student is already registered" copy that's friendlier than a
+    // generic dup-email warning.
+    STUDENT_ALREADY_REGISTERED: 'STUDENT_ALREADY_REGISTERED',
     DUPLICATE_WEBHOOK: 'DUPLICATE_WEBHOOK',
     INVALID_SIGNATURE: 'INVALID_SIGNATURE',
     INTERNAL_ERROR: 'INTERNAL_ERROR',

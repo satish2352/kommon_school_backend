@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const crypto = require('crypto');
 const { parse: csvParse } = require('csv-parse/sync');
@@ -150,28 +150,50 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
   let enrollment;
 
   await db.$transaction(async (tx) => {
-    // 0. Email uniqueness — reject if this email is already on an active
-    //    (non-deleted) enrollment. Same rule the public website endpoint
-    //    enforces in enrollment.service.js. Checked inside the transaction
-    //    to minimise the race window vs concurrent admin submissions.
+    // 0. Email uniqueness — admin manual / bulk paths reject any active
+    //    enrollment for the same email, regardless of payment status:
+    //      - Paid existing row     → STUDENT_ALREADY_REGISTERED (immutable)
+    //      - Incomplete public row → EMAIL_ALREADY_ENROLLED (admin must
+    //        resolve manually, since admin-created records skip the
+    //        Razorpay flow and would orphan the prior public lead).
+    //
+    //    Checked inside the transaction to minimise the race window vs
+    //    concurrent admin submissions and against the public website
+    //    upsert path. The partial unique index in DB is the final guard
+    //    if two admin requests race past this check.
     const emailLower = String(data.email || '').trim().toLowerCase();
     if (emailLower) {
-      const existingByEmail = await tx.enrollment.findFirst({
-        where: { email: emailLower, deleted_at: null },
-        select: { id: true, enrollment_code: true },
-      });
+      // Use lower(email) lookup to match the partial unique index and the
+      // public-flow resume helper. Joi lowercases inbound emails so this is
+      // belt-and-suspenders for any pre-existing mixed-case data.
+      const existingRows = await tx.$queryRaw`
+        SELECT id, status, enrollment_code FROM "enrollments"
+        WHERE lower(email) = lower(${emailLower}) AND deleted_at IS NULL
+        ORDER BY created_at DESC LIMIT 1
+        FOR UPDATE
+      `;
+      const existingByEmail = existingRows && existingRows[0] ? existingRows[0] : null;
       if (existingByEmail) {
+        const PAID = ['paid', 'sync_pending', 'completed'];
+        const isPaid = PAID.includes(existingByEmail.status);
+        const successfulPayments = await tx.payment.count({
+          where: { enrollment_id: existingByEmail.id, status: 'success' },
+        });
+        const code = isPaid || successfulPayments > 0
+          ? ERROR_CODES.STUDENT_ALREADY_REGISTERED
+          : 'EMAIL_ALREADY_ENROLLED';
+        const message = isPaid || successfulPayments > 0
+          ? 'A student is already registered with this email.'
+          : 'An incomplete enrollment with this email already exists. Resolve or soft-delete it before creating a new one.';
         logger.warn({
           msg: 'admin_enrollment_email_already_exists',
           traceId,
           existing_enrollment_id: existingByEmail.id,
           existing_enrollment_code: existingByEmail.enrollment_code,
+          existing_status: existingByEmail.status,
+          code,
         });
-        throw new ApiError(
-          409,
-          'EMAIL_ALREADY_ENROLLED',
-          'An enrollment with this email already exists.',
-        );
+        throw new ApiError(409, code, message);
       }
     }
 

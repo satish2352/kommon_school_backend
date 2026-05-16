@@ -364,6 +364,16 @@ async function selectForEnrollment(enrollmentId, planPricingId, traceId) {
   // --- Interactive transaction: read-check-write atomically to eliminate TOCTOU race ---
   // B2 fix: all three operations (read enrollment, count payments, update enrollment)
   // run inside a single Prisma interactive transaction.
+  //
+  // Resume-flow support:
+  //   The original guard refused plan selection when ANY payment row existed
+  //   for the enrollment. That broke the resume path — a returning user
+  //   whose earlier attempt got as far as creating a Razorpay order (but
+  //   never paid) could no longer change their plan. The new guard inspects
+  //   payment statuses: a `success` row is the immutable barrier; any
+  //   non-success row (initiated/pending/failed/cancelled/expired) is
+  //   superseded and cancelled before the new plan is stamped, so the next
+  //   create-order call mints a fresh order for the (possibly new) amount.
   let updated;
   let planPricing;
 
@@ -375,31 +385,86 @@ async function selectForEnrollment(enrollmentId, planPricingId, traceId) {
     // (timeout option passed to $transaction below — bumped from Prisma's 5s
     // default to 15s because the remote dev DB at 13.48.254.211 sometimes adds
     // ~3-6s of network latency per round-trip, and this transaction does 4
-    // sequential round-trips: find enrollment → count payments → find pricing → update)
+    // sequential round-trips: find enrollment → list payments → find pricing → update)
     if (!enrollment || enrollment.deleted_at !== null) {
       logger.warn({ msg: 'plan_select_enrollment_not_found', traceId, enrollment_id: enrollmentId });
       throw ApiError.notFound('Enrollment not found');
     }
 
-    // S2 fix: explicit payment count inside the transaction — do not rely on take:1
-    const paymentCount = await tx.payment.count({
-      where: { enrollment_id: enrollmentId },
-    });
+    // Block any enrollment that is already in (or past) a paid state. These
+    // are immutable from the public flow regardless of payment row state.
+    const PAID_ENROLLMENT_STATUSES = enrollmentRepo.PAID_ENROLLMENT_STATUSES;
+    if (PAID_ENROLLMENT_STATUSES.includes(enrollment.status)) {
+      logger.warn({
+        msg:           'plan_select_enrollment_already_paid',
+        traceId,
+        enrollment_id: enrollmentId,
+        status:        enrollment.status,
+      });
+      throw ApiError.conflict(
+        'This enrollment has already been paid. The plan cannot be changed.',
+      );
+    }
 
-    const isSubmitted = enrollment.status === 'submitted';
-    const isPaymentPendingNoOrder = enrollment.status === 'payment_pending' && paymentCount === 0;
+    // Pull payment rows for the enrollment so we can (a) hard-block on any
+    // successful payment and (b) cancel stale orders before stamping the
+    // new plan. SELECT FOR UPDATE serializes this with any concurrent
+    // verify/settle flow on the same payment.
+    const payments = await tx.$queryRaw`
+      SELECT id, status FROM "payments"
+      WHERE enrollment_id = ${enrollmentId}::uuid
+      FOR UPDATE
+    `;
 
-    if (!isSubmitted && !isPaymentPendingNoOrder) {
+    const successfulPayment = payments.find((p) => p.status === 'success');
+    if (successfulPayment) {
+      logger.warn({
+        msg:                 'plan_select_blocked_successful_payment_exists',
+        traceId,
+        enrollment_id:       enrollmentId,
+        successful_payment:  successfulPayment.id,
+      });
+      throw ApiError.conflict(
+        'This enrollment has already been paid. The plan cannot be changed.',
+      );
+    }
+
+    const isSubmitted      = enrollment.status === 'submitted';
+    const isPaymentPending = enrollment.status === 'payment_pending';
+    const isResumable      = enrollment.status === 'failed' || enrollment.status === 'expired';
+
+    if (!isSubmitted && !isPaymentPending && !isResumable) {
       logger.warn({
         msg:           'plan_select_enrollment_invalid_status',
         traceId,
         enrollment_id: enrollmentId,
         status:        enrollment.status,
-        payment_count: paymentCount,
+        payment_count: payments.length,
       });
       throw ApiError.conflict(
         'Cannot change the plan for this enrollment. It is already in progress or completed.',
       );
+    }
+
+    // Cancel any active (initiated/pending) Razorpay order rows so the
+    // upcoming create-order call mints a fresh order with the new amount.
+    // This is the production-correct way to handle plan changes mid-flow:
+    // the prior order's amount may no longer match the new plan's price.
+    const staleOrders = payments.filter(
+      (p) => p.status === 'initiated' || p.status === 'pending',
+    );
+    if (staleOrders.length > 0) {
+      await tx.payment.updateMany({
+        where: { id: { in: staleOrders.map((p) => p.id) } },
+        data:  { status: 'cancelled' },
+      });
+      logger.info({
+        msg:               'plan_select_cancelled_stale_orders',
+        traceId,
+        enrollment_id:     enrollmentId,
+        cancelled_count:   staleOrders.length,
+        cancelled_ids:     staleOrders.map((p) => p.id),
+      });
     }
 
     // Re-read pricing inside transaction (ensures it hasn't been deactivated between the

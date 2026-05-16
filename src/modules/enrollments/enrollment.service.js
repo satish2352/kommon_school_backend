@@ -6,9 +6,11 @@ const ApiError = require('../../utils/ApiError');
 const logger = require('../../config/logger');
 const { findActivePromoCode } = require('../promoCodes/promoCode.service');
 const { parsePagination, buildMeta } = require('../../utils/pagination');
+const { getPrismaClient } = require('../../config/database');
 const {
   DEFAULT_ENROLLMENT_AMOUNT_PAISE,
   ENROLLMENT_CODE_PREFIX,
+  ERROR_CODES,
 } = require('../../config/constants');
 
 // ---------------------------------------------------------------------------
@@ -68,130 +70,301 @@ function maskEmail(email) {
 
 // ---------------------------------------------------------------------------
 // createEnrollment — handles both legacy + new payload shapes
+//
+// Production-ready upsert/resume flow:
+//
+//   1. Validate (promo code re-check etc.) BEFORE opening any transaction so
+//      transient validation failures don't hold a DB lock open.
+//   2. Open an interactive transaction and SELECT ... FOR UPDATE the latest
+//      active enrollment for the same email. The row lock serializes parallel
+//      submissions for the same email (multi-tab, double-click, retries from
+//      different devices) so they always converge on a single record.
+//   3. If an existing row was found:
+//        a. If it is in a paid state (or has any successful Payment row),
+//           throw STUDENT_ALREADY_REGISTERED (409). Successful enrollments
+//           are immutable from the public flow.
+//        b. Otherwise, UPDATE that row with the new form data and return it
+//           as a "resumed" enrollment. The plan_pricing_id stays as-is so
+//           the user can pick up where they left off; status is reset to
+//           'submitted' only if it was a terminal failure state.
+//   4. If no existing row was found, INSERT a new one. The partial unique
+//      index `uniq_enrollments_email_active` makes this race-safe: if two
+//      transactions both saw nothing and both try to INSERT, the loser hits
+//      P2002 and we transparently fall back to the UPDATE path with the
+//      winner's row.
+//
+// All DB writes for a single request live inside one interactive transaction,
+// so a crash mid-request can't leave a half-created enrollment behind.
 // ---------------------------------------------------------------------------
 
-async function createEnrollment(body, traceId) {
-  // Normalise phone_number so dedup works regardless of shape.
-  // New shape sends `phone` (10 digits); legacy sends `phone_number`.
-  const phoneNumber = isNewShape(body) ? body.phone : body.phone_number;
-  const email = body.email;
+// Status values that mean "this enrollment is locked-in successfully paid"
+// and must never be mutated by the public flow. Mirrors the constant in the
+// repository so any future status added in one place is caught in code review
+// against the other.
+const PAID_ENROLLMENT_STATUSES = repo.PAID_ENROLLMENT_STATUSES;
 
-  // Deduplicate concurrent/duplicate submissions within a 5-min window.
-  // Edge case #10: return the existing record rather than creating a ghost.
-  // This makes double-click / network-retry submissions idempotent.
-  const existing = await repo.findRecentDuplicate(email, phoneNumber);
-  if (existing) {
+/**
+ * Build the data dict for the new-shape create path. Pure function — no DB.
+ * Returned object is used for both INSERT (full row) and UPDATE (partial
+ * resume; we drop email/amount/enrollment_code/candidate_type so they stay
+ * stable across resumes).
+ */
+function buildNewShapeBaseData(body) {
+  const { first_name, last_name } = splitName(body.name);
+  return {
+    first_name,
+    last_name,
+    phone_number: body.phone,
+    name: body.name.trim(),
+    user_role: body.role || null,
+    education: body.education || null,
+    readiness: body.readiness || null,
+    source: body.source || null,
+    promo_code: body.promoCode ? body.promoCode.trim().toUpperCase() : null,
+  };
+}
+
+function buildLegacyShapeBaseData(body) {
+  return {
+    first_name: body.first_name,
+    last_name: body.last_name,
+    phone_number: body.phone_number,
+    plan: body.plan,
+    group: body.group,
+    unit: body.unit,
+    phase: body.phase,
+    segment: body.segment,
+    amount: body.amount,
+  };
+}
+
+async function createEnrollment(body, traceId) {
+  const newShape = isNewShape(body);
+  const phoneNumber = newShape ? body.phone : body.phone_number;
+  const email = body.email; // already lower-cased by Joi validator
+
+  // ------------------------------------------------------------------
+  // Pre-transaction: optional promo code re-validation.
+  // We do this outside the tx so an invalid promo code doesn't hold a
+  // row lock for the duration of an external lookup.
+  // ------------------------------------------------------------------
+  if (newShape && body.promoCode) {
+    const promoMatch = await findActivePromoCode(body.promoCode);
+    if (!promoMatch) {
+      logger.warn({ msg: 'enrollment_promo_code_invalid', traceId, email: maskEmail(email) });
+      throw new ApiError(400, 'PROMO_CODE_INVALID', 'Invalid or inactive promo code.');
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Short-circuit: 5-minute dedupe for impatient double-click /
+  // network-retry submissions within the same browser session. Uses the
+  // (email, phone, status='submitted') signature so it only fires when
+  // the freshly-created row hasn't moved past the first step yet.
+  //
+  // Kept OUTSIDE the upsert tx because it's a cache-friendly read with
+  // no need for locking and short-circuits the common-case retry.
+  // ------------------------------------------------------------------
+  const dedup = await repo.findRecentDuplicate(email, phoneNumber);
+  if (dedup) {
     logger.info({
       msg: 'enrollment_deduped',
       traceId,
-      enrollment_id: existing.id,
+      enrollment_id: dedup.id,
       email: maskEmail(email),
     });
-    return { enrollment: existing, created: false };
+    return { enrollment: dedup, created: false, resumed: false };
   }
 
-  // Hard email uniqueness: outside the dedup window, reject any second
-  // enrollment that reuses an email already on an active (non-deleted)
-  // record. Applies to the public website flow only — admin manual/bulk
-  // paths enforce the same rule in adminEnrollment.service.js.
-  const existingByEmail = await repo.findActiveByEmail(email);
-  if (existingByEmail) {
-    logger.warn({
-      msg: 'enrollment_email_already_exists',
-      traceId,
-      existing_enrollment_id: existingByEmail.id,
-      email: maskEmail(email),
-    });
-    throw new ApiError(
-      409,
-      'EMAIL_ALREADY_ENROLLED',
-      'An enrollment with this email already exists. Please use a different email or contact support if you need help.',
-    );
-  }
+  // ------------------------------------------------------------------
+  // Build the per-shape data dictionaries.
+  // ------------------------------------------------------------------
+  const baseData = newShape ? buildNewShapeBaseData(body) : buildLegacyShapeBaseData(body);
 
-  let enrollmentData;
-
-  if (isNewShape(body)) {
-    // Promo code is optional. When provided, defense-in-depth re-validates
-    // against the DB so a malicious client can't bypass the (now-optional)
-    // frontend check. When absent (public website flow), skip the lookup.
-    if (body.promoCode) {
-      const promoMatch = await findActivePromoCode(body.promoCode);
-      if (!promoMatch) {
-        logger.warn({ msg: 'enrollment_promo_code_invalid', traceId, email: maskEmail(email) });
-        throw new ApiError(400, 'PROMO_CODE_INVALID', 'Invalid or inactive promo code.');
+  const insertData = newShape
+    ? {
+        ...baseData,
+        email,
+        amount: DEFAULT_ENROLLMENT_AMOUNT_PAISE,
+        plan: null,
+        group: null,
+        unit: null,
+        phase: null,
+        segment: null,
+        status: 'submitted',
+        enrollment_code: generateEnrollmentCode(),
+        candidate_type: 'EXTERNAL',
       }
-    }
+    : {
+        ...baseData,
+        email,
+        status: 'submitted',
+        name: null,
+        enrollment_code: null,
+        user_role: null,
+        education: null,
+        readiness: null,
+        source: null,
+        promo_code: null,
+      };
 
-    // ---- New frontend shape ----
-    const { first_name, last_name } = splitName(body.name);
-    const enrollmentCode = generateEnrollmentCode();
+  // ------------------------------------------------------------------
+  // Interactive transaction: lock → branch (resume vs insert).
+  // ------------------------------------------------------------------
+  const db = getPrismaClient();
 
-    enrollmentData = {
-      // Derived legacy fields (kept for DB completeness / admin display)
-      first_name,
-      last_name,
-      email,
-      phone_number: phoneNumber,
-      // Amount from constant until pricing module lands
-      amount: DEFAULT_ENROLLMENT_AMOUNT_PAISE,
-      // Legacy plan/group/unit/phase/segment: null for new-shape enrollments
-      plan: null,
-      group: null,
-      unit: null,
-      phase: null,
-      segment: null,
-      status: 'submitted',
-      // New columns
-      name: body.name.trim(),
-      enrollment_code: enrollmentCode,
-      user_role: body.role || null,
-      education: body.education || null,
-      readiness: body.readiness || null,
-      source: body.source || null,
-      // Promo code — store the normalised value when provided, null otherwise
-      promo_code: body.promoCode ? body.promoCode.trim().toUpperCase() : null,
-      // Public website flow → EXTERNAL candidate by definition. (Schema default
-      // is also EXTERNAL, but being explicit makes intent obvious to readers.)
-      candidate_type: 'EXTERNAL',
-    };
-  } else {
-    // ---- Legacy shape — unchanged behaviour ----
-    enrollmentData = {
-      first_name: body.first_name,
-      last_name: body.last_name,
-      email,
-      phone_number: phoneNumber,
-      plan: body.plan,
-      group: body.group,
-      unit: body.unit,
-      phase: body.phase,
-      segment: body.segment,
-      amount: body.amount,
-      status: 'submitted',
-      // New columns are null for legacy submissions
-      name: null,
-      enrollment_code: null,
-      user_role: null,
-      education: null,
-      readiness: null,
-      source: null,
-      promo_code: null,
-    };
-  }
+  const result = await db.$transaction(
+    async (tx) => {
+      // 1) Lock any existing active row for this email.
+      const existing = await repo.findActiveByEmailForUpdate(tx, email);
 
-  const enrollment = await repo.createEnrollment(enrollmentData);
+      if (existing) {
+        // 2a) Successful enrollment → immutable. Block re-enrollment with a
+        // friendly, distinct error code so the UI can render the right copy.
+        if (PAID_ENROLLMENT_STATUSES.includes(existing.status)) {
+          logger.warn({
+            msg: 'enrollment_blocked_already_paid_status',
+            traceId,
+            existing_enrollment_id: existing.id,
+            existing_status: existing.status,
+            email: maskEmail(email),
+          });
+          throw new ApiError(
+            409,
+            ERROR_CODES.STUDENT_ALREADY_REGISTERED,
+            'A student is already registered with this email.',
+          );
+        }
 
-  logger.info({
-    msg: 'enrollment_created',
-    traceId,
-    enrollment_id: enrollment.id,
-    enrollment_code: enrollment.enrollment_code,
-    shape: isNewShape(body) ? 'new' : 'legacy',
-    email: maskEmail(email),
-  });
+        // 2b) Belt-and-suspenders: a successful Payment row trumps any drift
+        // on the enrollment.status column. Reconcile status forward if we
+        // find one, then block — this case should not normally arise but if
+        // it does, the safe behaviour is "treat as paid".
+        const paidAlready = await repo.hasSuccessfulPayment(tx, existing.id);
+        if (paidAlready) {
+          if (existing.status !== 'paid' && existing.status !== 'completed') {
+            await tx.enrollment.update({
+              where: { id: existing.id },
+              data: { status: 'paid' },
+            });
+          }
+          logger.warn({
+            msg: 'enrollment_blocked_payment_success_row_exists',
+            traceId,
+            existing_enrollment_id: existing.id,
+            existing_status: existing.status,
+            email: maskEmail(email),
+          });
+          throw new ApiError(
+            409,
+            ERROR_CODES.STUDENT_ALREADY_REGISTERED,
+            'A student is already registered with this email.',
+          );
+        }
 
-  return { enrollment, created: true };
+        // 2c) Resume — update the existing incomplete row with the freshly
+        // submitted form data so the rest of the flow uses the latest input.
+        //
+        // Status policy on resume:
+        //   submitted              → leave alone (still on step 1, no plan yet)
+        //   payment_pending        → leave alone (preserves plan_pricing_id so
+        //                            user keeps the prior plan unless they
+        //                            re-select; selectForEnrollment will
+        //                            cancel any stale orders on re-pick)
+        //   failed / expired       → reset to 'submitted' so the user can
+        //                            walk the flow cleanly from scratch
+        const nextStatus =
+          existing.status === 'failed' || existing.status === 'expired'
+            ? 'submitted'
+            : existing.status;
+
+        const updated = await tx.enrollment.update({
+          where: { id: existing.id },
+          data: { ...baseData, status: nextStatus },
+        });
+
+        logger.info({
+          msg: 'enrollment_resumed',
+          traceId,
+          enrollment_id: updated.id,
+          previous_status: existing.status,
+          next_status: nextStatus,
+          shape: newShape ? 'new' : 'legacy',
+          email: maskEmail(email),
+        });
+
+        return { enrollment: updated, created: false, resumed: true };
+      }
+
+      // 3) No active row → INSERT. The partial unique index handles the
+      // race where two parallel txns both saw nothing and both tried to
+      // INSERT: the loser hits P2002 and we retry the resume path with
+      // the winner's row.
+      try {
+        const created = await tx.enrollment.create({ data: insertData });
+
+        logger.info({
+          msg: 'enrollment_created',
+          traceId,
+          enrollment_id: created.id,
+          enrollment_code: created.enrollment_code,
+          shape: newShape ? 'new' : 'legacy',
+          email: maskEmail(email),
+        });
+
+        return { enrollment: created, created: true, resumed: false };
+      } catch (e) {
+        if (e && e.code === 'P2002') {
+          // Race: another tx inserted between our SELECT and INSERT.
+          // Re-acquire the lock and retry as a resume.
+          const retry = await repo.findActiveByEmailForUpdate(tx, email);
+          if (!retry) {
+            // Extremely unlikely — would mean the winning row was deleted
+            // between the failed INSERT and the retry SELECT. Rethrow so
+            // the caller sees the genuine error.
+            throw e;
+          }
+          if (PAID_ENROLLMENT_STATUSES.includes(retry.status)) {
+            throw new ApiError(
+              409,
+              ERROR_CODES.STUDENT_ALREADY_REGISTERED,
+              'A student is already registered with this email.',
+            );
+          }
+          const paidNow = await repo.hasSuccessfulPayment(tx, retry.id);
+          if (paidNow) {
+            throw new ApiError(
+              409,
+              ERROR_CODES.STUDENT_ALREADY_REGISTERED,
+              'A student is already registered with this email.',
+            );
+          }
+          const updated = await tx.enrollment.update({
+            where: { id: retry.id },
+            data: baseData,
+          });
+          logger.info({
+            msg: 'enrollment_resumed_after_unique_race',
+            traceId,
+            enrollment_id: updated.id,
+            email: maskEmail(email),
+          });
+          return { enrollment: updated, created: false, resumed: true };
+        }
+        throw e;
+      }
+    },
+    {
+      // 15s — same as the rest of the repo. Remote dev DB latency makes
+      // Prisma's 5s default too tight; the upsert path does at most 4
+      // sequential round-trips (SELECT FOR UPDATE → payment count → INSERT
+      // or UPDATE → return).
+      timeout: 15000,
+      maxWait: 5000,
+    },
+  );
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

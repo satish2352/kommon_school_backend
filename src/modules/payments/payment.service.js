@@ -13,127 +13,238 @@ const { getPrismaClient } = require('../../config/database');
 /**
  * Create a Razorpay order for an existing enrollment.
  *
- * Edge case #4 (duplicate payment from double-click): a UNIQUE constraint on
- * payments.razorpay_order_id prevents two parallel orders from being persisted.
- * If the enrollment already has an `initiated` payment that has not been
- * cancelled or expired, return the existing order details so the frontend can
- * resume checkout instead of creating a parallel order.
+ * Concurrency model
+ * -----------------
+ * The entire flow runs inside a single Prisma interactive transaction that
+ * first acquires a row-level lock (SELECT ... FOR UPDATE) on the enrollment.
+ * Effect:
+ *   - Two parallel POST /payment-order calls for the SAME enrollment
+ *     serialize at the lock. The second one waits for the first to commit,
+ *     then re-reads payments and finds the first one's freshly-inserted
+ *     `initiated` row, which it reuses.
+ *   - Calls for DIFFERENT enrollments are independent (each locks its own
+ *     row), so throughput is not affected.
+ *   - The Razorpay HTTP call happens inside the lock. This is intentional:
+ *     it is the only way to guarantee that we never mint two orders for the
+ *     same enrollment. Razorpay's create-order RTT is typically <1s and
+ *     well within the 20s tx timeout.
+ *
+ * Stale-order cleanup
+ * -------------------
+ * On every call we list all existing payment rows for the enrollment. Any
+ * row in `initiated` / `pending` that is NOT the one we're about to reuse
+ * gets auto-cancelled in the same transaction. This means:
+ *   - Historical duplicates from before this fix landed are cleaned up the
+ *     next time the user hits create-order.
+ *   - At most one ACTIVE order per enrollment exists at any time going
+ *     forward, simplifying admin reconciliation and the Payments page.
+ *
+ * Guards (same as before, enforced inside the lock)
+ *   - paid/sync_pending/completed         → 409 PAYMENT_ALREADY_COMPLETED
+ *   - any Payment row in status='success' → 409 PAYMENT_ALREADY_COMPLETED
+ *     (belt-and-suspenders against status drift)
+ *   - no plan_pricing selected            → 400 PLAN_NOT_SELECTED
+ *   - selected plan/pricing not ACTIVE    → 400 PLAN_INACTIVE / PLAN_PRICING_INACTIVE
  */
 async function createOrder(enrollmentId, traceId) {
-  // Load enrollment with plan_pricing (and plan) to determine the amount
   const db = getPrismaClient();
-  const enrollment = await db.enrollment.findFirst({
-    where: { id: enrollmentId, deleted_at: null },
-    include: {
-      payments: {
-        orderBy: { created_at: 'desc' },
-        take: 1,
-      },
-      plan_pricing: {
-        include: { plan: true },
-      },
-    },
-  });
-  if (!enrollment) throw ApiError.notFound('Enrollment not found');
 
-  // Edge case #14: do not create a new order on an already-completed enrollment
-  if (enrollment.status === 'paid' || enrollment.status === 'completed') {
-    throw ApiError.conflict(
-      'Enrollment already has a successful payment',
-      ERROR_CODES.PAYMENT_ALREADY_COMPLETED,
-    );
-  }
-
-  // Plan must be selected before creating a payment order.
-  // This replaces the old course-fee fallback.
-  if (!enrollment.plan_pricing_id || !enrollment.plan_pricing) {
-    logger.warn({
-      msg:           'payment_order_plan_not_selected',
-      traceId,
-      enrollment_id: enrollmentId,
-    });
-    throw new ApiError(
-      400,
-      ERROR_CODES.PLAN_NOT_SELECTED,
-      'A subscription plan must be selected before proceeding to payment',
-    );
-  }
-
-  // Verify the selected pricing and parent plan are both ACTIVE
-  if (enrollment.plan_pricing.status !== 'ACTIVE' || enrollment.plan_pricing.plan.status !== 'ACTIVE') {
-    const code = enrollment.plan_pricing.plan.status !== 'ACTIVE'
-      ? ERROR_CODES.PLAN_INACTIVE
-      : ERROR_CODES.PLAN_PRICING_INACTIVE;
-    throw new ApiError(
-      400,
-      code,
-      'Selected plan is no longer available. Please select a different plan.',
-    );
-  }
-
-  // Amount in paise from plan_pricing.finalPrice (already stamped on enrollment by selectForEnrollment)
-  const amountPaise = enrollment.amount;
-
-  const existingPayments = await repo.findPaymentsByEnrollmentId(enrollmentId);
-  const reusable = existingPayments.find((p) => p.status === 'initiated' || p.status === 'pending');
-  if (reusable) {
-    logger.info({
-      msg: 'payment_order_reused',
-      traceId,
-      enrollment_id: enrollmentId,
-      payment_id: reusable.id,
-    });
-    return {
-      orderId: reusable.razorpay_order_id,
-      amount: reusable.amount,
-      currency: reusable.currency,
-      paymentId: reusable.id,
-      keyId: (await razorpayService.getActiveConfig()).config.key_id,
-    };
-  }
-
+  // Resolve the active Razorpay config BEFORE opening the transaction.
+  // razorpayService.getActiveConfig() uses its own connection from the pool;
+  // calling it inside the tx would force Prisma to grab a second connection,
+  // which under load could deadlock the pool. The config is org-wide and
+  // doesn't change per-request, so reading it ahead-of-time is safe.
   const { instance, config } = await razorpayService.getActiveConfig();
 
-  const order = await razorpayService.createOrder(instance, {
-    amount: amountPaise,
-    currency: RAZORPAY_CURRENCY,
-    receipt: enrollment.id,
-    notes: {
-      enrollmentId: enrollment.id,
-      email: enrollment.email,
-      planTier: enrollment.plan_pricing?.plan?.tier ?? null,
+  return db.$transaction(
+    async (tx) => {
+      // 1. Acquire row-level lock on the enrollment. All parallel
+      //    create-order calls for THIS enrollment will serialize here.
+      const lockRows = await tx.$queryRaw`
+        SELECT id FROM "enrollments"
+        WHERE id = ${enrollmentId}::uuid AND deleted_at IS NULL
+        FOR UPDATE
+      `;
+      if (!lockRows || lockRows.length === 0) {
+        throw ApiError.notFound('Enrollment not found');
+      }
+
+      // 2. Full enrollment with plan + plan_pricing relations for the amount
+      //    + receipt notes. Done inside the tx so we see any committed update
+      //    from a serialized predecessor (e.g. plan re-selection).
+      const enrollment = await tx.enrollment.findFirst({
+        where: { id: enrollmentId, deleted_at: null },
+        include: { plan_pricing: { include: { plan: true } } },
+      });
+      if (!enrollment) throw ApiError.notFound('Enrollment not found');
+
+      // 3. Guard: already paid / settled. Both the enrollment.status check
+      //    AND a successful Payment row check are used — status is the fast
+      //    path, the Payment row is the source of truth in case status has
+      //    drifted.
+      if (enrollmentRepo.PAID_ENROLLMENT_STATUSES.includes(enrollment.status)) {
+        throw ApiError.conflict(
+          'Enrollment already has a successful payment',
+          ERROR_CODES.PAYMENT_ALREADY_COMPLETED,
+        );
+      }
+      const successCount = await tx.payment.count({
+        where: { enrollment_id: enrollmentId, status: 'success' },
+      });
+      if (successCount > 0) {
+        throw ApiError.conflict(
+          'Enrollment already has a successful payment',
+          ERROR_CODES.PAYMENT_ALREADY_COMPLETED,
+        );
+      }
+
+      // 4. Guard: plan must be selected and ACTIVE.
+      if (!enrollment.plan_pricing_id || !enrollment.plan_pricing) {
+        logger.warn({
+          msg:           'payment_order_plan_not_selected',
+          traceId,
+          enrollment_id: enrollmentId,
+        });
+        throw new ApiError(
+          400,
+          ERROR_CODES.PLAN_NOT_SELECTED,
+          'A subscription plan must be selected before proceeding to payment',
+        );
+      }
+      if (
+        enrollment.plan_pricing.status !== 'ACTIVE' ||
+        enrollment.plan_pricing.plan.status !== 'ACTIVE'
+      ) {
+        const code = enrollment.plan_pricing.plan.status !== 'ACTIVE'
+          ? ERROR_CODES.PLAN_INACTIVE
+          : ERROR_CODES.PLAN_PRICING_INACTIVE;
+        throw new ApiError(
+          400,
+          code,
+          'Selected plan is no longer available. Please select a different plan.',
+        );
+      }
+
+      // 5. List existing payments inside the lock. This is the data we use
+      //    to (a) find a reusable order and (b) identify stale rows to
+      //    auto-cancel.
+      const amountPaise = enrollment.amount;
+      const existingPayments = await tx.payment.findMany({
+        where:   { enrollment_id: enrollmentId },
+        orderBy: { created_at: 'desc' },
+      });
+
+      // 6. Find reusable: any active row (initiated/pending) whose amount
+      //    matches the current enrollment amount. Latest first because
+      //    findMany is ordered desc by created_at.
+      const activeOrders = existingPayments.filter(
+        (p) => p.status === 'initiated' || p.status === 'pending',
+      );
+      const reusable = activeOrders.find(
+        (p) => Number(p.amount) === Number(amountPaise),
+      );
+
+      // 7. Auto-cancel any active order that is NOT the reusable one.
+      //    Catches:
+      //      - Historical duplicates created before the lock was added
+      //      - Stale orders whose amount no longer matches (plan changed)
+      //      - Orphaned orders from prior failed flows
+      //    Net effect: at most one ACTIVE order per enrollment at any time.
+      const toCancel = activeOrders.filter((p) => !reusable || p.id !== reusable.id);
+      if (toCancel.length > 0) {
+        await tx.payment.updateMany({
+          where: { id: { in: toCancel.map((p) => p.id) } },
+          data:  { status: 'cancelled' },
+        });
+        logger.info({
+          msg:             'payment_order_stale_active_cancelled',
+          traceId,
+          enrollment_id:   enrollmentId,
+          cancelled_count: toCancel.length,
+          cancelled_ids:   toCancel.map((p) => p.id),
+        });
+      }
+
+      // 8. Reusable path: return the existing matching order.
+      if (reusable) {
+        logger.info({
+          msg:           'payment_order_reused',
+          traceId,
+          enrollment_id: enrollmentId,
+          payment_id:    reusable.id,
+        });
+        return {
+          orderId:   reusable.razorpay_order_id,
+          amount:    reusable.amount,
+          currency:  reusable.currency,
+          paymentId: reusable.id,
+          keyId:     config.key_id,
+        };
+      }
+
+      // 9. No reusable: call Razorpay (inside lock — see header comment)
+      //    and persist the fresh payment row. The unique constraint on
+      //    razorpay_order_id is the final defence: if Razorpay ever returns
+      //    a duplicate id (it shouldn't) the INSERT throws P2002 and the
+      //    transaction rolls back cleanly.
+      const order = await razorpayService.createOrder(instance, {
+        amount:   amountPaise,
+        currency: RAZORPAY_CURRENCY,
+        receipt:  enrollment.id,
+        notes: {
+          enrollmentId: enrollment.id,
+          email:        enrollment.email,
+          planTier:     enrollment.plan_pricing?.plan?.tier ?? null,
+        },
+      });
+
+      const payment = await tx.payment.create({
+        data: {
+          enrollment_id:      enrollment.id,
+          razorpay_order_id:  order.id,
+          amount:             amountPaise,
+          currency:           RAZORPAY_CURRENCY,
+          status:             'initiated',
+          // Edge case #15: persist razorpay_config_id so verify always uses
+          // the same key set even if the active gateway is switched mid-flight.
+          razorpay_config_id: config.id,
+        },
+      });
+
+      // 10. Status update is idempotent — only write if it would change.
+      //     Avoids spurious updated_at bumps on noisy retries.
+      if (enrollment.status !== 'payment_pending') {
+        await tx.enrollment.update({
+          where: { id: enrollment.id },
+          data:  { status: 'payment_pending' },
+        });
+      }
+
+      logger.info({
+        msg:           'payment_order_created',
+        traceId,
+        enrollment_id: enrollment.id,
+        payment_id:    payment.id,
+        order_id:      order.id,
+      });
+
+      return {
+        orderId:   order.id,
+        amount:    payment.amount,
+        currency:  payment.currency,
+        paymentId: payment.id,
+        keyId:     config.key_id,
+      };
     },
-  });
-
-  // Edge case #15: persist razorpay_config_id so verify always uses the same
-  // key set even if the active gateway is switched mid-flight.
-  const payment = await repo.createPayment({
-    enrollment_id: enrollment.id,
-    razorpay_order_id: order.id,
-    amount: amountPaise,
-    currency: RAZORPAY_CURRENCY,
-    status: 'initiated',
-    razorpay_config_id: config.id,
-  });
-
-  // Status is already 'payment_pending' (set by selectForEnrollment) — no-op update is fine
-  await enrollmentRepo.updateEnrollmentStatus(enrollment.id, 'payment_pending');
-
-  logger.info({
-    msg: 'payment_order_created',
-    traceId,
-    enrollment_id: enrollment.id,
-    payment_id: payment.id,
-    order_id: order.id,
-  });
-
-  return {
-    orderId: order.id,
-    amount: payment.amount,
-    currency: payment.currency,
-    paymentId: payment.id,
-    keyId: config.key_id,
-  };
+    {
+      // 20s — bumped from the project-standard 15s because this transaction
+      // holds the enrollment row lock during the Razorpay HTTP call. Under
+      // normal Razorpay latency (~300-800ms) the lock is held <1s; the 20s
+      // ceiling is a safety net against an unresponsive gateway.
+      timeout: 20000,
+      maxWait: 5000,
+    },
+  );
 }
 
 /**

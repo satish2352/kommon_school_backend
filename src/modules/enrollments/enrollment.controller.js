@@ -13,26 +13,37 @@ const { HTTP } = require('../../config/constants');
 // ---------------------------------------------------------------------------
 
 const create = asyncHandler(async (req, res) => {
-  const { enrollment, created } = await enrollmentService.createEnrollment(req.body, req.traceId);
+  const { enrollment, created, resumed } = await enrollmentService.createEnrollment(
+    req.body,
+    req.traceId,
+  );
 
   // Build response that satisfies both:
   //   - Legacy callers: all snake_case fields
   //   - Frontend (new shape): needs `id` (UUID) + `enrollmentId` (= enrollment_code)
+  //   - Frontend resume UI: needs `resumed` boolean so it can render a
+  //     "Welcome back" hint instead of a fresh-enrollment confirmation.
   const payload = {
     ...enrollment,
     // Alias enrollment_code as enrollmentId for the React frontend.
     // If this is a legacy enrollment, enrollment_code will be null and
     // enrollmentId will likewise be null (the frontend never calls this for legacy).
     enrollmentId: enrollment.enrollment_code || null,
+    // Tri-state hint for the frontend:
+    //   created=true            → brand-new enrollment
+    //   resumed=true            → existing incomplete row updated with new data
+    //   neither                 → dedup hit within the 5-min window
+    resumed: Boolean(resumed),
   };
 
   const status = created ? HTTP.CREATED : HTTP.OK;
-  sendSuccess(
-    res,
-    status,
-    payload,
-    created ? 'Enrollment created' : 'Existing enrollment returned',
-  );
+  const message = created
+    ? 'Enrollment created'
+    : resumed
+    ? 'Resumed previous enrollment'
+    : 'Existing enrollment returned';
+
+  sendSuccess(res, status, payload, message);
 });
 
 const getById = asyncHandler(async (req, res) => {
