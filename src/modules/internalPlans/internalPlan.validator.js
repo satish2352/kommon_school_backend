@@ -4,8 +4,21 @@ const Joi = require('joi');
 
 // ---------------------------------------------------------------------------
 // Coupon sub-schema (used inside create/update body)
+//
+// IMPORTANT: `usedCount` MUST be declared here. With the global
+// `stripUnknown: true` setting in validate.middleware.js, any field not
+// declared here is silently dropped from the request body BEFORE the
+// service sees it. That used to cause a real bug: editing a plan to
+// add/remove a coupon would clobber every existing coupon's `usedCount`
+// back to 0, since the admin form re-sent the array and the validator
+// stripped the field, and the service then defaulted it to 0. The
+// `id` field is also declared so it round-trips for the same reason.
 // ---------------------------------------------------------------------------
 const couponSchema = Joi.object({
+  // Server-assigned sequential id. The form posts back whatever it loaded
+  // so we accept any integer here; the service re-assigns ids via
+  // normaliseCoupons (idx + 1) regardless.
+  id:            Joi.number().integer().min(0).optional(),
   code:          Joi.string().trim().uppercase().max(50).required(),
   discountType:  Joi.string().valid('PERCENT', 'FLAT').required(),
   discountValue: Joi.number().positive().max(100000).required().when('discountType', {
@@ -14,6 +27,11 @@ const couponSchema = Joi.object({
   }),
   expiryDate:    Joi.string().isoDate().optional().allow(null, ''),
   usageLimit:    Joi.number().integer().positive().optional().allow(null),
+  // Round-trip the live redemption counter so admin form edits preserve
+  // it. Capped at 1e9 to reject obvious garbage. The service ALSO merges
+  // from the existing DB row as a second line of defense in case the
+  // frontend ever omits this field — see updateInternalPlan.
+  usedCount:     Joi.number().integer().min(0).max(1_000_000_000).optional(),
   status:        Joi.string().valid('ACTIVE', 'INACTIVE').default('ACTIVE'),
 });
 

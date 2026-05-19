@@ -1,6 +1,10 @@
 'use strict';
 
-const { createManualEnrollment, createBulkEnrollments } = require('./adminEnrollment.service');
+const {
+  createManualEnrollment,
+  createInternalEnrollment,
+  createBulkEnrollments,
+} = require('./adminEnrollment.service');
 const { sendSuccess } = require('../../utils/ApiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const { HTTP } = require('../../config/constants');
@@ -24,6 +28,27 @@ const createManual = asyncHandler(async (req, res) => {
     traceId: req.traceId,
   });
 
+  sendSuccess(res, HTTP.CREATED, result, 'Enrollment created successfully');
+});
+
+/**
+ * POST /api/v1/admin/enrollments/internal
+ *
+ * Admin "New Enrollment" wizard, internal-flow endpoint. Carries
+ * { name, email, phone, role, education?, readiness?, source?,
+ *   courseId, internalPlanId, internalCouponCode?, notes? }.
+ *
+ * Backend recomputes pricing from internalPlanId + courseId + couponCode;
+ * fee values in the body are silently dropped by the validator.
+ */
+const createInternal = asyncHandler(async (req, res) => {
+  const result = await createInternalEnrollment({
+    data:        req.body,
+    actor:       req.user,
+    adminSource: 'INTERNAL',
+    traceId:     req.traceId,
+    req,
+  });
   sendSuccess(res, HTTP.CREATED, result, 'Enrollment created successfully');
 });
 
@@ -58,4 +83,4 @@ const getCsvTemplate = asyncHandler(async (req, res) => {
   res.status(HTTP.OK).send(csv);
 });
 
-module.exports = { createManual, createBulk, getCsvTemplate };
+module.exports = { createManual, createInternal, createBulk, getCsvTemplate };

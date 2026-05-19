@@ -15,4 +15,11 @@ router.use(hasPermission(PERMISSIONS.ENROLLMENTS_VIEW));
 
 router.get('/', validate(listEnrollmentsQuerySchema, 'query'), controller.list);
 
+// GET /api/v1/admin/enrollments/:id — single enrollment + plan + course
+// + ALL payment rows. Powers the InternalEnrollments detail drawer.
+// Declared AFTER the /manual /internal /bulk /csv-template routes on
+// the sibling router (mounted earlier in app.use) so those don't match
+// the :id pattern.
+router.get('/:id', controller.getById);
+
 module.exports = router;

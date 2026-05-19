@@ -9,6 +9,8 @@ const { ENROLLMENT_CODE_PREFIX, ERROR_CODES } = require('../../config/constants'
 const { buildPayload, executeWebhookDelivery } = require('../enrollments/enrollmentWebhook.service');
 const { manualEnrollmentSchema } = require('./adminEnrollment.validator');
 const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.service');
+const { runCouponValidation } = require('../internalPlans/internalPlan.service');
+const auditService = require('../audit/audit.service');
 
 // ---------------------------------------------------------------------------
 // CSV required column names (case-insensitive matching)
@@ -318,6 +320,309 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
 }
 
 // ---------------------------------------------------------------------------
+// createInternalEnrollment — admin "New Enrollment" wizard, internal flow
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a single enrollment from the admin internal-enrollment wizard.
+ *
+ * Guarantees:
+ *   - Pricing is read from the DB (CourseMaster.courseFee). Frontend
+ *     cannot influence the final amount.
+ *   - Coupon is re-validated server-side via the same runCouponValidation
+ *     used by the public calculate-fee API. usageLimit IS enforced
+ *     (admin policy now: reject at limit).
+ *   - usedCount is atomically incremented on the InternalPlan row inside
+ *     the same transaction, under SELECT ... FOR UPDATE on the
+ *     internal_plans row. Two concurrent admin submissions racing for the
+ *     last redemption serialize: the loser sees the limit reached and
+ *     gets a 400 COUPON_USAGE_LIMIT_REACHED.
+ *   - Snapshot of base / discount / final + full coupon row is persisted
+ *     on the enrollment so future admin edits to the live coupons[] array
+ *     do NOT rewrite history.
+ *   - final === 0 (100% off) → enrollment goes straight to status='paid'
+ *     with NO Payment row created (clean ledger).
+ *   - final > 0 → one Payment row at status='success', synthetic
+ *     razorpay_order_id of "ADMIN_MANUAL_<uuid>".
+ *
+ * @param {{ data, actor, adminSource?, traceId, req? }} params
+ * @returns {Promise<{ enrollment, webhookDelivery }>}
+ */
+async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL', traceId, req }) {
+  const db = getPrismaClient();
+  const toPaise = (rupees) => Math.round(Number(rupees) * 100);
+
+  // ---------------------------------------------------------------------------
+  // Step 1: read-only validation BEFORE we open the tx, so a fast 4xx
+  //         doesn't hold any locks.
+  // ---------------------------------------------------------------------------
+  const planSnapshot = await db.internalPlan.findUnique({
+    where: { id: data.internalPlanId },
+    include: { course: true },
+  });
+  if (!planSnapshot) throw new ApiError(404, 'INTERNAL_PLAN_NOT_FOUND', 'Internal plan not found.');
+  if (planSnapshot.status !== 'ACTIVE') {
+    throw new ApiError(400, 'INTERNAL_PLAN_INACTIVE', 'Internal plan is not active.');
+  }
+  if (planSnapshot.courseId !== data.courseId) {
+    throw new ApiError(400, 'INTERNAL_PLAN_COURSE_MISMATCH',
+      'Internal plan does not belong to the selected course.');
+  }
+  if (!planSnapshot.course || planSnapshot.course.courseFee == null) {
+    throw new ApiError(400, 'COURSE_FEE_UNAVAILABLE', 'Course fee is not configured.');
+  }
+  const basePriceRupees = Number(planSnapshot.course.courseFee);
+  if (!Number.isFinite(basePriceRupees) || basePriceRupees <= 0) {
+    throw new ApiError(400, 'COURSE_FEE_INVALID', 'Course fee is invalid.');
+  }
+  const basePricePaise = toPaise(basePriceRupees);
+
+  // ---------------------------------------------------------------------------
+  // Step 2: interactive transaction with row-locks.
+  //
+  //   Lock #1: internal_plans row — serializes coupon usedCount updates
+  //            for the same plan across concurrent admin submissions.
+  //   Lock #2: enrollments-by-email row — same race-protection as the
+  //            public flow (createEnrollment).
+  // ---------------------------------------------------------------------------
+  let enrollment;
+  let createdPaymentId = null;
+  let couponSnapshot   = null;
+  let couponCode       = null;
+  let discountAmountPaise = 0;
+  let finalAmountPaise;
+  let amountPaidPaiseInitial;
+  let pendingPaiseInitial;
+  let internalPaymentStatus;
+  let persistedCouponSnapshot = null;
+
+  await db.$transaction(async (tx) => {
+    // ---- Lock #1: internal_plans row, re-read coupons under lock ----
+    const lockedPlanRows = await tx.$queryRaw`
+      SELECT id, coupons FROM "internal_plans"
+      WHERE id = ${planSnapshot.id}::int
+      FOR UPDATE
+    `;
+    if (!lockedPlanRows || lockedPlanRows.length === 0) {
+      throw new ApiError(404, 'INTERNAL_PLAN_NOT_FOUND', 'Internal plan not found.');
+    }
+    const liveCoupons = Array.isArray(lockedPlanRows[0].coupons) ? lockedPlanRows[0].coupons : [];
+    const livePlanForValidation = { ...planSnapshot, coupons: liveCoupons };
+
+    // ---- Coupon validation under lock (enforces usageLimit) ----
+    let discountRupees = 0;
+    if (data.internalCouponCode) {
+      const result = runCouponValidation({
+        code: data.internalCouponCode,
+        plan: livePlanForValidation,
+        basePrice: basePriceRupees,
+      });
+      if (!result.valid) {
+        // Distinct code for the usage-limit case so the frontend can
+        // render a specific "limit reached" message vs a generic invalid.
+        const code = result.reason === 'Coupon usage limit reached'
+          ? 'COUPON_USAGE_LIMIT_REACHED'
+          : 'COUPON_INVALID';
+        const userMessage = code === 'COUPON_USAGE_LIMIT_REACHED'
+          ? 'Coupon usage limit has been reached. Please choose another coupon or continue without one.'
+          : (result.reason || 'Coupon is invalid.');
+        throw new ApiError(400, code, userMessage);
+      }
+      couponSnapshot = result.coupon;
+      couponCode     = String(couponSnapshot.code).toUpperCase();
+      discountRupees = result.discountAmount;
+
+      // ---- Atomic usedCount increment on the locked coupons JSON ----
+      // We rewrite the entire coupons[] array because Postgres jsonb_set
+      // with array index is fragile when the index shifts; locking the
+      // row gives us safe read-modify-write semantics.
+      const updatedCoupons = liveCoupons.map((c) =>
+        String(c.code).toUpperCase() === couponCode
+          ? { ...c, usedCount: (Number(c.usedCount) || 0) + 1 }
+          : c,
+      );
+      await tx.internalPlan.update({
+        where: { id: planSnapshot.id },
+        data:  { coupons: updatedCoupons },
+      });
+    }
+
+    discountAmountPaise = toPaise(discountRupees);
+    finalAmountPaise    = Math.max(0, basePricePaise - discountAmountPaise);
+    // Admin path collects the full final amount up-front. PARTIAL / PENDING
+    // are not used (the enum keeps them only for future flexibility if a
+    // record-payment UI is ever added). For every admin internal enrollment
+    // the status is either FULLY_DISCOUNTED (100% off) or PAID.
+    amountPaidPaiseInitial = finalAmountPaise;
+    pendingPaiseInitial    = 0;
+    internalPaymentStatus  =
+      basePricePaise > 0 && finalAmountPaise === 0 ? 'FULLY_DISCOUNTED' : 'PAID';
+
+    persistedCouponSnapshot = couponSnapshot
+      ? {
+          code:           couponCode,
+          discountType:   couponSnapshot.discountType,
+          discountValue:  Number(couponSnapshot.discountValue),
+          expiryDate:     couponSnapshot.expiryDate || null,
+          usageLimit:     couponSnapshot.usageLimit != null ? Number(couponSnapshot.usageLimit) : null,
+          discount_amount_paise: discountAmountPaise,
+          base_price_paise:      basePricePaise,
+          final_amount_paise:    finalAmountPaise,
+          snapshottedAt: new Date().toISOString(),
+          snapshottedBy: actor?.email ?? null,
+        }
+      : null;
+
+    // ---- Lock #2: existing enrollment-by-email check (same as public flow) ----
+    const emailLower = String(data.email || '').trim().toLowerCase();
+    if (emailLower) {
+      const existingRows = await tx.$queryRaw`
+        SELECT id, status, enrollment_code FROM "enrollments"
+        WHERE lower(email) = lower(${emailLower}) AND deleted_at IS NULL
+        ORDER BY created_at DESC LIMIT 1
+        FOR UPDATE
+      `;
+      const existing = existingRows && existingRows[0] ? existingRows[0] : null;
+      if (existing) {
+        const PAID = ['paid', 'sync_pending', 'completed'];
+        const isPaid = PAID.includes(existing.status);
+        const successfulPayments = await tx.payment.count({
+          where: { enrollment_id: existing.id, status: 'success' },
+        });
+        if (isPaid || successfulPayments > 0) {
+          throw new ApiError(409, ERROR_CODES.STUDENT_ALREADY_REGISTERED,
+            'A student is already registered with this email.');
+        }
+        throw new ApiError(409, 'EMAIL_ALREADY_ENROLLED',
+          'An incomplete enrollment with this email already exists. Resolve or soft-delete it before creating a new one.');
+      }
+    }
+
+    // ---- Create enrollment with the full snapshot ----
+    const { first_name, last_name } = splitName(data.name);
+    const enrollmentCode = generateEnrollmentCode();
+    enrollment = await tx.enrollment.create({
+      data: {
+        first_name, last_name,
+        email: data.email,
+        phone_number: data.phone,
+        name: data.name.trim(),
+        enrollment_code: enrollmentCode,
+        user_role: data.role || null,
+        education: data.education || null,
+        readiness: data.readiness || null,
+        source: data.source || null,
+        candidate_type: 'INTERNAL',
+        plan: null, group: null, unit: null, phase: null, segment: null,
+        amount: finalAmountPaise,           // legacy column kept in sync with final
+        promo_code: couponCode,             // legacy column
+        // First-class snapshot columns:
+        internal_plan_id:        planSnapshot.id,
+        base_price_paise:        basePricePaise,
+        discount_amount_paise:   discountAmountPaise,
+        final_amount_paise:      finalAmountPaise,
+        amount_paid_paise:       amountPaidPaiseInitial,
+        coupon_code_snapshot:    couponCode,
+        coupon_snapshot:         persistedCouponSnapshot,
+        internal_payment_status: internalPaymentStatus,
+        // Lifecycle: admin record is settled at creation
+        status: 'paid',
+      },
+    });
+
+    // ---- Payment row — only when there's actually money to collect ----
+    if (finalAmountPaise > 0) {
+      const synthOrderId = `ADMIN_MANUAL_${crypto.randomBytes(8).toString('hex')}`;
+      const payment = await tx.payment.create({
+        data: {
+          enrollment_id:     enrollment.id,
+          razorpay_order_id: synthOrderId,
+          amount:            finalAmountPaise,
+          currency:          'INR',
+          status:            'success',
+        },
+      });
+      createdPaymentId = payment.id;
+    }
+  }, {
+    timeout: 15000,
+    maxWait: 5000,
+  });
+
+  // ---------------------------------------------------------------------------
+  // Step 3: audit + log + webhook (post-tx).
+  // ---------------------------------------------------------------------------
+  try {
+    await auditService.record({
+      actor,
+      action: 'enrollment.internal.create',
+      entityType: 'enrollment',
+      entityId: enrollment.id,
+      changes: {
+        internalPlanId:       planSnapshot.id,
+        internalPlanRefId:    planSnapshot.refId,
+        courseId:             planSnapshot.courseId,
+        basePricePaise,
+        discountAmountPaise,
+        finalAmountPaise,
+        couponCode,
+        paymentId:            createdPaymentId,
+        adminSource,
+      },
+      req,
+    });
+  } catch (auditErr) {
+    logger.warn({
+      msg: 'internal_enrollment_audit_failed',
+      traceId,
+      enrollment_id: enrollment.id,
+      error: auditErr?.message ?? String(auditErr),
+    });
+  }
+
+  logger.info({
+    msg: 'internal_enrollment_created',
+    traceId,
+    enrollment_id: enrollment.id,
+    enrollment_code: enrollment.enrollment_code,
+    internal_plan_id: planSnapshot.id,
+    base_paise: basePricePaise,
+    discount_paise: discountAmountPaise,
+    final_paise: finalAmountPaise,
+    coupon_code: couponCode,
+    payment_id: createdPaymentId,
+    actor_id: actor?.id,
+  });
+
+  const adminMeta = {
+    source:     adminSource,
+    actorId:    actor?.id ?? null,
+    actorEmail: actor?.email ?? null,
+    pricing: { basePricePaise, discountAmountPaise, finalAmountPaise, couponCode },
+    ...(data.notes ? { notes: data.notes } : {}),
+  };
+  const webhookDelivery = await fireAdminWebhook({ enrollment, adminMeta });
+
+  return {
+    enrollment: {
+      id:                    enrollment.id,
+      enrollmentCode:        enrollment.enrollment_code,
+      status:                enrollment.status,
+      internalPaymentStatus,
+      basePricePaise,
+      discountAmountPaise,
+      finalAmountPaise,
+      amountPaidPaise:       amountPaidPaiseInitial,
+      pendingPaise:          pendingPaiseInitial,
+      couponCode,
+      couponSnapshot:        persistedCouponSnapshot,
+      paymentId:             createdPaymentId,
+    },
+    webhookDelivery,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // createBulkEnrollments
 // ---------------------------------------------------------------------------
 
@@ -460,4 +765,4 @@ async function createBulkEnrollments({ fileBuffer, actor, traceId }) {
   };
 }
 
-module.exports = { createManualEnrollment, createBulkEnrollments };
+module.exports = { createManualEnrollment, createInternalEnrollment, createBulkEnrollments };

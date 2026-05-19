@@ -203,8 +203,11 @@ async function createInternalPlan(body, traceId) {
  * @returns {Promise<object>}
  */
 async function updateInternalPlan(id, body, traceId) {
-  // 404 guard
-  await getInternalPlanById(id, traceId);
+  // 404 guard + grab the live row so we can defensively merge usedCount
+  // from existing coupons. Even though the validator now accepts the
+  // `usedCount` field, this preserves the counter for any caller that
+  // forgets to send it (mock backend / future SDKs / hand-rolled curl).
+  const existing = await getInternalPlanById(id, traceId);
 
   if (body.courseId !== undefined) {
     await assertCourseExists(Number(body.courseId), traceId);
@@ -216,7 +219,35 @@ async function updateInternalPlan(id, body, traceId) {
   if (body.description !== undefined) data.description = body.description?.trim() ?? null;
   if (body.courseId    !== undefined) data.courseId    = Number(body.courseId);
   if (body.status      !== undefined) data.status      = body.status;
-  if (Array.isArray(body.coupons))    data.coupons     = normaliseCoupons(body.coupons);
+
+  if (Array.isArray(body.coupons)) {
+    // Build a code → usedCount map from the existing plan so we can
+    // restore the counter for any coupon the caller didn't carry forward.
+    // Code-keyed (case-insensitive) — survives id renumbering by
+    // normaliseCoupons which assigns sequential ids based on array order.
+    const liveCoupons = Array.isArray(existing.coupons) ? existing.coupons : [];
+    const liveUsedByCode = new Map();
+    for (const c of liveCoupons) {
+      const key = String(c.code || '').toUpperCase().trim();
+      if (key) liveUsedByCode.set(key, Number(c.usedCount) || 0);
+    }
+
+    // Preserve usedCount in this order:
+    //   1. Whatever the caller sent (already validated and round-trippable).
+    //   2. Live DB value for the same code (defensive — handles legacy
+    //      clients that don't send usedCount at all).
+    //   3. Zero (new coupon never used).
+    const couponsWithUsedCount = body.coupons.map((c) => {
+      if (c.usedCount != null) return c;
+      const key = String(c.code || '').toUpperCase().trim();
+      if (liveUsedByCode.has(key)) {
+        return { ...c, usedCount: liveUsedByCode.get(key) };
+      }
+      return c; // normaliseCoupons defaults to 0
+    });
+
+    data.coupons = normaliseCoupons(couponsWithUsedCount);
+  }
 
   const plan = await repo.updateInternalPlan(id, data);
 
@@ -371,4 +402,8 @@ module.exports = {
   listByCourse,
   validateCoupon,
   calculateFee,
+  // Exported so the admin internal-enrollment service can re-run the
+  // EXACT same validation logic the public calculate-fee endpoint uses
+  // — including the usage-limit check, which the admin path enforces.
+  runCouponValidation,
 };

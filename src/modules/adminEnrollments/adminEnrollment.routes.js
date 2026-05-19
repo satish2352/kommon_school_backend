@@ -6,7 +6,10 @@ const controller = require('./adminEnrollment.controller');
 const { validate } = require('../../middleware/validate.middleware');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { hasPermission } = require('../../middleware/rbac.middleware');
-const { manualEnrollmentSchema } = require('./adminEnrollment.validator');
+const {
+  manualEnrollmentSchema,
+  adminInternalEnrollmentSchema,
+} = require('./adminEnrollment.validator');
 const { PERMISSIONS } = require('../../config/constants');
 
 const router = Router();
@@ -32,13 +35,24 @@ const upload = multer({
 });
 
 // ---------------------------------------------------------------------------
-// POST /manual — single enrollment without Razorpay
+// POST /manual — single enrollment without Razorpay (legacy planTier path)
 // ---------------------------------------------------------------------------
 router.post(
   '/manual',
   hasPermission(PERMISSIONS.ENROLLMENTS_MANUAL_CREATE),
   validate(manualEnrollmentSchema, 'body'),
   controller.createManual,
+);
+
+// ---------------------------------------------------------------------------
+// POST /internal — admin "New Enrollment" wizard, internal-plan flow.
+// Same permission as /manual; different payload shape.
+// ---------------------------------------------------------------------------
+router.post(
+  '/internal',
+  hasPermission(PERMISSIONS.ENROLLMENTS_MANUAL_CREATE),
+  validate(adminInternalEnrollmentSchema, 'body'),
+  controller.createInternal,
 );
 
 // ---------------------------------------------------------------------------

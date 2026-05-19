@@ -130,6 +130,17 @@ enum InternalPlanStatus {
   INACTIVE
 }
 
+// Payment status for the admin-internal enrollment flow ONLY.
+// Public-website enrollments leave this NULL and rely on the existing
+// EnrollmentStatus enum + Payment rows. Stored as its own column so the
+// admin list page can filter on it without a CASE expression.
+enum InternalPaymentStatus {
+  PENDING          // no money collected yet
+  PARTIAL          // amount_paid < final_amount, but > 0
+  PAID             // amount_paid >= final_amount, final > 0
+  FULLY_DISCOUNTED // final_amount = 0 because coupon zeroed it out
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -202,6 +213,22 @@ model Enrollment {
   plan_pricing_id Int?
   plan_pricing    PlanPricing? @relation("EnrollmentPlanPricing", fields: [plan_pricing_id], references: [id], onDelete: SetNull)
 
+  // --------------------------------------------------------------------
+  // Admin-internal enrollment financial snapshot. All nullable so public
+  // website rows stay valid. See createInternalEnrollment for write path.
+  // coupon_snapshot freezes the coupon row at redemption time so future
+  // admin edits to the plan's coupons[] never rewrite history.
+  // --------------------------------------------------------------------
+  internal_plan_id        Int?
+  internal_plan           InternalPlan? @relation("EnrollmentInternalPlan", fields: [internal_plan_id], references: [id], onDelete: SetNull)
+  base_price_paise        Int?
+  discount_amount_paise   Int?
+  final_amount_paise      Int?
+  amount_paid_paise       Int       @default(0)
+  coupon_code_snapshot    String?   @db.VarChar(50)
+  coupon_snapshot         Json?
+  internal_payment_status InternalPaymentStatus?
+
   payments           Payment[]
   external_api_logs  ExternalApiLog[]
   followups          Followup[]
@@ -210,6 +237,8 @@ model Enrollment {
   @@index([status])
   @@index([created_at])
   @@index([enrollment_code])
+  @@index([internal_plan_id])
+  @@index([internal_payment_status, created_at(sort: Desc)])
   @@map("enrollments")
 }
 
@@ -499,6 +528,10 @@ model InternalPlan {
 
   courseId    Int                  @map("course_id")
   course      CourseMaster         @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  // Inverse of Enrollment.internal_plan. Lets admin reports do
+  // `internalPlan.enrollments` for "all redemptions for this plan".
+  enrollments Enrollment[]         @relation("EnrollmentInternalPlan")
 
   coupons     Json                 @default("[]")
 
