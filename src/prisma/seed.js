@@ -369,17 +369,17 @@ async function seedCourses() {
       });
       updated++;
     } else {
+      const cn = await prisma.courseNameMaster.upsert({
+        where:  { name: nameOfCourseAsGroup },
+        update: {},
+        create: { name: nameOfCourseAsGroup, status: 'ACTIVE' },
+      });
       await prisma.courseMaster.create({
         data: {
           nameOfCourseAsGroup,
           ...data,
           isSystemDefault: false,
-          courseName: {
-            connectOrCreate: {
-              where:  { name: nameOfCourseAsGroup },
-              create: { name: nameOfCourseAsGroup, status: 'ACTIVE' },
-            },
-          },
+          courseNameId: cn.id,
         },
       });
       created++;
@@ -406,6 +406,11 @@ async function seedCourses() {
     });
     updated++;
   } else {
+    const generalCn = await prisma.courseNameMaster.upsert({
+      where:  { name: 'GENERAL' },
+      update: {},
+      create: { name: 'GENERAL', status: 'ACTIVE', isSystemDefault: true },
+    });
     await prisma.courseMaster.create({
       data: {
         nameOfCourseAsGroup: 'GENERAL',
@@ -416,12 +421,7 @@ async function seedCourses() {
         educationId:         eduGeneral?.id ?? null,
         durationId:          dur6Months?.id ?? null,
         isSystemDefault:     true,
-        courseName: {
-          connectOrCreate: {
-            where:  { name: 'GENERAL' },
-            create: { name: 'GENERAL', status: 'ACTIVE', isSystemDefault: true },
-          },
-        },
+        courseNameId:        generalCn.id,
       },
     });
     created++;
