@@ -54,25 +54,11 @@ app.use(
   }),
 );
 
-const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
-
-// Dev-friendly origin check: accept anything in CORS_ALLOWED_ORIGINS, plus any
-// http(s)://localhost:<port> and http(s)://127.0.0.1:<port> (covers Vite dev
-// running on 5173/5174/etc., admin dashboards, and curl/Postman with no Origin).
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  if (corsOrigins.includes(origin)) return true;
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
-  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
-  return false;
-}
-
+// CORS open to all origins. The cors middleware reflects the request's Origin
+// header in Access-Control-Allow-Origin, which is required when
+// credentials: true (the wildcard '*' is not allowed alongside credentials).
 const corsOptions = {
-  origin: (origin, cb) =>
-    isAllowedOrigin(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS')),
+  origin: (origin, cb) => cb(null, true),
   credentials: true,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'Idempotency-Key'],
