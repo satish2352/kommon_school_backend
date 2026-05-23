@@ -25,12 +25,43 @@ const Joi = require('joi');
  * ("…T00:00:00.000ZT23:59:59.999") if Joi has already done its conversion,
  * which then makes Prisma throw a PrismaClientValidationError. Keeping
  * the input string as-typed avoids that round-trip.
+ *
+ * Allowed status values mirror the EnrollmentStatus + InternalPaymentStatus
+ * enums the admin Status dropdown exposes. Anything outside the list is
+ * rejected with a 422 so a stray query param can't silently match nothing.
  */
+const ALLOWED_STATUS_VALUES = [
+  // EnrollmentStatus
+  'submitted',
+  'payment_pending',
+  'paid',
+  'sync_pending',
+  'completed',
+  'failed',
+  'cancelled',
+  // InternalPaymentStatus (admin UI shows these on internal flow)
+  'PAID',
+  'PARTIAL',
+  'PENDING',
+  'FULLY_DISCOUNTED',
+  // External sync state — Sync column filter
+  'SYNC_PENDING',
+  'SYNC_SUCCESS',
+  'SYNC_FAILED',
+  'SYNC_DEAD_LETTER',
+];
+
 const listEnrollmentsQuerySchema = Joi.object({
   page:     Joi.number().integer().min(1).default(1),
+  // limit is capped server-side at MAX_LIMIT (100). Keeping a smaller
+  // default (20) protects the table-render cost on the frontend.
   limit:    Joi.number().integer().min(1).max(100).default(20),
   search:   Joi.string().trim().max(200).allow('').optional(),
-  status:   Joi.string().trim().max(50).allow('').optional(),
+  status:   Joi.string().trim().valid(...ALLOWED_STATUS_VALUES, '').optional(),
+  // External-sync-status filter (Sync column in the admin table). Mapped
+  // separately in the service so a SYNC_FAILED query doesn't accidentally
+  // filter on enrollments.status.
+  externalSyncStatus: Joi.string().valid('PENDING', 'SUCCESS', 'FAILED', 'DEAD_LETTER').optional(),
   // Canonical date params
   dateFrom: Joi.string().isoDate().raw().optional(),
   dateTo:   Joi.string().isoDate().raw().optional(),

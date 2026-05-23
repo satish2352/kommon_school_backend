@@ -141,6 +141,17 @@ enum InternalPaymentStatus {
   FULLY_DISCOUNTED // final_amount = 0 because coupon zeroed it out
 }
 
+// Third-party sync state, separate from the customer-facing payment
+// lifecycle (EnrollmentStatus). Lives on the enrollment so a single row
+// makes it clear whether OUR webhook to Sumago / EXTERNAL_API_URL
+// succeeded, even if the customer's payment itself is paid.
+enum ExternalSyncStatus {
+  PENDING      // queued or in-flight
+  SUCCESS      // third-party returned 2xx
+  FAILED       // an attempt failed; retry loop is still active
+  DEAD_LETTER  // retries exhausted; needs manual retry-sync
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -228,6 +239,10 @@ model Enrollment {
   coupon_code_snapshot    String?   @db.VarChar(50)
   coupon_snapshot         Json?
   internal_payment_status InternalPaymentStatus?
+
+  // Third-party sync state — distinct from `status` so admin UI shows
+  // payment lifecycle vs sync state separately. See ExternalSyncStatus enum.
+  external_sync_status    ExternalSyncStatus?  @map("external_sync_status")
 
   payments           Payment[]
   external_api_logs  ExternalApiLog[]
@@ -384,6 +399,16 @@ model CourseMaster {
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
+  // ─── Sumago taxonomy overrides ────────────────────────────────────
+  // When set, these are sent in the provision-user webhook instead of
+  // the org-wide env-var defaults (SUMAGO_GROUP / SUMAGO_UNIT / etc.).
+  // Must match strings on Sumago's allowlist exactly — admin is
+  // responsible for entering values their Sumago config accepts.
+  sumagoGroup         String?          @map("sumago_group")   @db.VarChar(100)
+  sumagoUnit          String?          @map("sumago_unit")    @db.VarChar(100)
+  sumagoPhase         String?          @map("sumago_phase")   @db.VarChar(100)
+  sumagoSegment       String?          @map("sumago_segment") @db.VarChar(100)
+
   // FK: education master
   educationId         Int?             @map("education_id")
   education           EducationMaster? @relation(fields: [educationId], references: [id], onDelete: Restrict)
@@ -526,6 +551,11 @@ model InternalPlan {
   description String?              @db.Text
   status      InternalPlanStatus   @default(ACTIVE)
 
+  // Override for the Sumago `plan` field sent in the provision-user
+  // webhook. Falls back to SUMAGO_PLAN_CODE env var when null. Must
+  // match a plan code registered on Sumago for the organization.
+  sumagoPlanCode String?           @map("sumago_plan_code") @db.VarChar(100)
+
   courseId    Int                  @map("course_id")
   course      CourseMaster         @relation(fields: [courseId], references: [id], onDelete: Restrict)
 
@@ -553,6 +583,49 @@ model Permission {
   role_permissions RolePermission[]
 
   @@map("permissions")
+}
+
+// Persistent local mirror of users fetched from the Sumago Platform
+// Integration API (GET /integrations/get-users). Lets the admin UI
+// render instantly from our DB and only re-hits Sumago when explicitly
+// resynced. Sync logic lives in sumagoUserSync.service.js.
+//
+// Natural key is email (Sumago's userId is always null in the
+// get-users response, so we cannot use it). The unique index on the
+// table is on lower(email), declared in the SQL migration — Prisma
+// can't model functional indexes, so we declare the column non-unique
+// here and rely on the SQL constraint for uniqueness.
+model SumagoUser {
+  id                Int       @id @default(autoincrement())
+  email             String    @db.VarChar(255)
+  firstName         String?   @map("first_name") @db.VarChar(200)
+  lastName          String?   @map("last_name")  @db.VarChar(200)
+  phoneNumber       String?   @map("phone_number") @db.VarChar(50)
+
+  plan              String?   @db.VarChar(200)
+  groupName         String?   @map("group_name") @db.VarChar(200)
+  unit              String?   @db.VarChar(200)
+  phase             String?   @db.VarChar(200)
+  segment           String?   @db.VarChar(200)
+
+  emailStatus       String?   @map("email_status")      @db.VarChar(50)
+  onboardingStatus  String?   @map("onboarding_status") @db.VarChar(50)
+
+  planHistory       Json      @default("[]") @map("plan_history")
+
+  organizationCode  String?   @map("organization_code")  @db.VarChar(100)
+  tenantTokenHash   String?   @map("tenant_token_hash")  @db.VarChar(64)
+  rawPayload        Json      @map("raw_payload")
+  contentHash       String    @map("content_hash") @db.Char(64)
+
+  firstSeenAt       DateTime  @default(now()) @map("first_seen_at")  @db.Timestamptz
+  lastSyncedAt      DateTime  @default(now()) @map("last_synced_at") @db.Timestamptz
+  updatedAt         DateTime  @default(now()) @map("updated_at")     @db.Timestamptz
+
+  @@map("sumago_users")
+  @@index([organizationCode, lastSyncedAt(sort: Desc)])
+  @@index([tenantTokenHash])
+  @@index([onboardingStatus])
 }
 
 model RolePermission {

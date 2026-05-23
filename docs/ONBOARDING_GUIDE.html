@@ -1,0 +1,1558 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Kommon School Backend — Developer Onboarding Guide</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'neutral',
+    flowchart: { htmlLabels: true, curve: 'basis' },
+    sequence: { actorMargin: 50, wrap: true, width: 160 }
+  });
+</script>
+<style>
+  :root {
+    --primary: #0b4f6c;
+    --accent: #ff7a59;
+    --soft: #f1f6f9;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --good: #2e7d32;
+    --warn: #c0392b;
+    --code-bg: #0f172a;
+    --code-ink: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    color: var(--ink);
+    line-height: 1.55;
+    margin: 0;
+    background: #fff;
+  }
+  .cover {
+    page-break-after: always;
+    min-height: 95vh;
+    background: linear-gradient(135deg, #0b4f6c 0%, #145374 70%, #1c789e 100%);
+    color: white;
+    padding: 80px 60px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .cover h1 {
+    font-size: 56px;
+    margin: 0 0 10px;
+    letter-spacing: -1px;
+    line-height: 1.05;
+  }
+  .cover h2 {
+    font-size: 22px;
+    font-weight: 400;
+    margin: 0 0 40px;
+    opacity: 0.9;
+  }
+  .cover .tag {
+    display: inline-block;
+    padding: 6px 14px;
+    background: rgba(255,255,255,0.18);
+    border-radius: 4px;
+    margin-bottom: 30px;
+    font-size: 13px;
+    letter-spacing: 2px;
+  }
+  .cover .meta {
+    font-size: 14px;
+    opacity: 0.85;
+    border-top: 1px solid rgba(255,255,255,0.25);
+    padding-top: 18px;
+  }
+  .cover .stat-row {
+    display: flex;
+    gap: 30px;
+    margin-top: 40px;
+  }
+  .cover .stat {
+    background: rgba(255,255,255,0.10);
+    padding: 14px 18px;
+    border-radius: 8px;
+    min-width: 130px;
+  }
+  .cover .stat .n { font-size: 28px; font-weight: 700; }
+  .cover .stat .l { font-size: 12px; opacity: 0.8; letter-spacing: 1px; }
+  main {
+    padding: 40px 60px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1.section {
+    color: var(--primary);
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 8px;
+    margin-top: 60px;
+    margin-bottom: 20px;
+    page-break-before: always;
+    font-size: 30px;
+  }
+  h1.section:first-of-type { page-break-before: auto; }
+  h2 { color: var(--primary); margin-top: 30px; font-size: 22px; }
+  h3 { color: #145374; margin-top: 22px; font-size: 17px; }
+  h4 { color: #1c789e; margin-top: 18px; font-size: 15px; }
+  p { margin: 10px 0; }
+  .lead {
+    font-size: 17px;
+    color: #374151;
+    background: var(--soft);
+    padding: 16px 22px;
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
+    margin: 16px 0;
+  }
+  .donkey {
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    padding: 14px 20px;
+    border-radius: 4px;
+    margin: 14px 0;
+    font-size: 15px;
+  }
+  .donkey::before {
+    content: "Explain Like I'm 5 (ELI5)";
+    display: block;
+    font-weight: 700;
+    color: #92400e;
+    font-size: 11px;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+  }
+  .warn {
+    background: #fee2e2;
+    border-left: 4px solid #dc2626;
+    padding: 14px 20px;
+    border-radius: 4px;
+    margin: 14px 0;
+  }
+  .warn::before {
+    content: "Warning";
+    font-weight: 700;
+    color: #991b1b;
+    font-size: 11px;
+    letter-spacing: 2px;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .tip {
+    background: #dcfce7;
+    border-left: 4px solid #16a34a;
+    padding: 14px 20px;
+    border-radius: 4px;
+    margin: 14px 0;
+  }
+  .tip::before {
+    content: "Pro Tip";
+    font-weight: 700;
+    color: #14532d;
+    font-size: 11px;
+    letter-spacing: 2px;
+    display: block;
+    margin-bottom: 6px;
+  }
+  code {
+    font-family: 'Consolas', 'Monaco', monospace;
+    background: #eef2ff;
+    color: #312e81;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 16px 20px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 18px 0;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid #e5e7eb;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--primary);
+    color: white;
+    font-weight: 600;
+  }
+  tr:nth-child(even) td { background: #f9fafb; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .toc {
+    columns: 2;
+    column-gap: 40px;
+    margin: 20px 0;
+    background: var(--soft);
+    padding: 24px 30px;
+    border-radius: 8px;
+  }
+  .toc h3 { margin-top: 0; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { break-inside: avoid; }
+  .mermaid {
+    background: #fdfdfd;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 20px 0;
+    text-align: center;
+    overflow: auto;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .card {
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 14px 18px;
+    background: #fafbfc;
+  }
+  .card h4 { margin-top: 0; color: var(--primary); }
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-right: 6px;
+  }
+  .pill.pub { background: #dbeafe; color: #1e40af; }
+  .pill.auth { background: #fce7f3; color: #9d174d; }
+  .pill.admin { background: #fed7aa; color: #9a3412; }
+  .pill.super { background: #ddd6fe; color: #5b21b6; }
+  .pill.get { background: #d1fae5; color: #065f46; }
+  .pill.post { background: #dbeafe; color: #1e40af; }
+  .pill.patch { background: #fef3c7; color: #92400e; }
+  .pill.del { background: #fee2e2; color: #991b1b; }
+  .file-ref {
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    background: #f3f4f6;
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+  footer {
+    text-align: center;
+    padding: 40px;
+    color: var(--muted);
+    font-size: 12px;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 60px;
+  }
+  @media print {
+    .mermaid { break-inside: avoid; }
+    h1.section { page-break-before: always; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    a { color: var(--ink); text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== COVER ===================== -->
+<section class="cover">
+  <div>
+    <div class="tag">DEVELOPER ONBOARDING</div>
+    <h1>Kommon School<br/>Backend Guide</h1>
+    <h2>A Beginner-Friendly Walkthrough — Built for a Fresher Joining the Team</h2>
+  </div>
+  <div>
+    <div class="stat-row">
+      <div class="stat"><div class="n">19</div><div class="l">MODULES</div></div>
+      <div class="stat"><div class="n">25+</div><div class="l">DB TABLES</div></div>
+      <div class="stat"><div class="n">6</div><div class="l">CRON JOBS</div></div>
+      <div class="stat"><div class="n">5</div><div class="l">RETRY ATTEMPTS</div></div>
+    </div>
+    <div class="meta" style="margin-top: 40px;">
+      Node.js 20 &middot; Express &middot; Prisma &middot; PostgreSQL &middot; Redis &middot; BullMQ &middot; Razorpay<br/>
+      Generated on 2026-05-22 &middot; For: sumagodev1@gmail.com
+    </div>
+  </div>
+</section>
+
+<main>
+
+<!-- ===================== TOC ===================== -->
+<section class="toc">
+  <h3>Table of Contents</h3>
+  <ol>
+    <li>What is Kommon School?</li>
+    <li>The Big Picture — Architecture</li>
+    <li>Tech Stack &amp; Why Each Tool</li>
+    <li>Project Folder Structure</li>
+    <li>How the Server Starts (boot order)</li>
+    <li>Configuration &amp; Environment Vars</li>
+    <li>Database Schema Deep Dive</li>
+    <li>The Golden Path — Student Enrollment Journey</li>
+    <li>Authentication &amp; JWT Tokens</li>
+    <li>RBAC — Roles &amp; Permissions</li>
+    <li>Enrollment Module Deep Dive</li>
+    <li>Payment Module Deep Dive</li>
+    <li>Razorpay Webhook Handling</li>
+    <li>External API Sync (Sumago)</li>
+    <li>BullMQ Queues &amp; Workers</li>
+    <li>Cron Jobs &amp; Distributed Locks</li>
+    <li>Admin Modules Overview</li>
+    <li>Middleware Stack</li>
+    <li>API Response Pattern</li>
+    <li>Error Handling Strategy</li>
+    <li>Important Edge Cases</li>
+    <li>Local Development Setup</li>
+    <li>Glossary of Terms</li>
+  </ol>
+</section>
+
+<!-- ===================== 1. WHAT IS KOMMON SCHOOL ===================== -->
+<h1 class="section">1. What is Kommon School?</h1>
+
+<div class="lead">
+  Kommon School Backend is the brain behind a student enrollment + online payment platform. It handles the entire journey: from a student filling out an "Enroll Now" form on the website, to paying through Razorpay, to being provisioned into a third-party learning platform called <strong>Sumago</strong>.
+</div>
+
+<div class="donkey">
+  Imagine a coaching class that takes online admissions. A student visits the website, fills a form, pays the fees online, and gets login credentials to start learning. This backend is the kitchen behind that restaurant — students see a clean menu (frontend), but behind the scenes, this backend cooks the meal: it stores the form data, takes the money safely, calls Razorpay, waits for confirmation, and then tells another system (Sumago) to give the student their textbooks. It also keeps shopkeeper-side tools (admin panel) so the team can manage admissions, payments, follow-ups, and reports.
+</div>
+
+<h2>What problems does it solve?</h2>
+<ul>
+  <li><strong>Take online payments safely</strong> using Razorpay (no money should be lost, ever).</li>
+  <li><strong>Handle thousands of simultaneous enrollments</strong> without creating duplicate records or duplicate charges.</li>
+  <li><strong>Provision students automatically</strong> on the Sumago learning platform after successful payment.</li>
+  <li><strong>Retry automatically</strong> if any step fails (network outage, Sumago down, etc.) — no manual babysitting.</li>
+  <li><strong>Give admins control</strong> via dashboards: see enrollments, payments, follow-ups, reports, retry failed syncs.</li>
+  <li><strong>Track everything for audit</strong> — every privileged action is logged.</li>
+</ul>
+
+<h2>Two kinds of enrollments</h2>
+<table>
+  <thead>
+    <tr><th>Type</th><th>Who creates it?</th><th>How?</th><th>candidate_type</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>EXTERNAL</strong></td><td>The student themselves</td><td>Public "Enroll Now" form on the website + Razorpay payment</td><td><code>EXTERNAL</code></td></tr>
+    <tr><td><strong>INTERNAL</strong></td><td>Admin/Marketing team</td><td>Manually one-by-one OR bulk CSV upload from the admin dashboard. Uses internal plans &amp; coupons.</td><td><code>INTERNAL</code></td></tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 2. ARCHITECTURE ===================== -->
+<h1 class="section">2. The Big Picture — Architecture</h1>
+
+<p>The system isn't just one Express server. It's a small ecosystem with multiple moving parts that talk to each other through PostgreSQL and Redis.</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "Outside World"
+        STUDENT[Student Browser]
+        ADMIN[Admin Dashboard React App]
+        RAZORPAY[Razorpay Servers]
+        SUMAGO[Sumago Learning Platform]
+    end
+
+    subgraph "Backend Process - Node.js"
+        EXPRESS[Express HTTP Server<br/>Port 3000]
+        WORKER[BullMQ Workers<br/>External API Sync]
+        CRON[Cron Schedulers<br/>6 scheduled jobs]
+    end
+
+    subgraph "Infrastructure"
+        PG[(PostgreSQL<br/>Source of truth)]
+        REDIS[(Redis<br/>Queues + Locks)]
+    end
+
+    STUDENT -->|HTTP requests| EXPRESS
+    ADMIN -->|HTTP + JWT| EXPRESS
+    EXPRESS -->|Create order| RAZORPAY
+    RAZORPAY -->|Webhook payment.captured| EXPRESS
+
+    EXPRESS --> PG
+    EXPRESS --> REDIS
+    WORKER --> PG
+    WORKER --> REDIS
+    WORKER -->|POST enrollment data| SUMAGO
+    SUMAGO -->|GET users list| WORKER
+    CRON --> PG
+    CRON --> REDIS
+</div>
+
+<div class="donkey">
+  Think of the backend like a busy post office.
+  <ul>
+    <li>The <strong>Express server</strong> is the front counter where customers (students, admins) come and submit forms.</li>
+    <li><strong>PostgreSQL</strong> is the big filing cabinet where all permanent records live.</li>
+    <li><strong>Redis</strong> is the sticky-notes board — fast, temporary, used to remember "this job needs doing" or "I'm currently working on this, don't touch it".</li>
+    <li><strong>BullMQ workers</strong> are the postmen who go out and deliver letters (call Sumago's API) in the background. They retry if a delivery fails.</li>
+    <li><strong>Cron jobs</strong> are the night-shift clerks who clean up stale paperwork at fixed schedules.</li>
+  </ul>
+</div>
+
+<h2>Why this design?</h2>
+<ul>
+  <li><strong>Decouple slow work from fast responses.</strong> When a student pays, the user-facing response returns in milliseconds. The slow part (calling Sumago, retrying on failure) happens in a worker after the response is sent.</li>
+  <li><strong>Survive Sumago outages.</strong> If Sumago is down, jobs queue up in Redis and retry later instead of failing the student's enrollment.</li>
+  <li><strong>Scale horizontally.</strong> You can run multiple Express+Worker instances on different servers. Redis distributed locks make sure cron jobs only run on ONE instance at a time.</li>
+</ul>
+
+
+<!-- ===================== 3. TECH STACK ===================== -->
+<h1 class="section">3. Tech Stack &amp; Why Each Tool</h1>
+
+<table>
+  <thead><tr><th>Tool</th><th>Purpose</th><th>Why?</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Node.js 20+</strong></td><td>JavaScript runtime</td><td>Modern features, native test runner, fast.</td></tr>
+    <tr><td><strong>Express 4</strong></td><td>HTTP framework</td><td>Industry standard, huge ecosystem, simple middleware model.</td></tr>
+    <tr><td><strong>Prisma 5</strong></td><td>ORM (Object-Relational Mapper)</td><td>Type-safe queries, automatic migrations, easy schema management.</td></tr>
+    <tr><td><strong>PostgreSQL 15</strong></td><td>Database</td><td>Strong consistency, ACID transactions, row-level locking (for race protection).</td></tr>
+    <tr><td><strong>Redis 7</strong></td><td>In-memory store</td><td>Job queue backend + distributed locks + ephemeral caching.</td></tr>
+    <tr><td><strong>BullMQ</strong></td><td>Background job queue</td><td>Reliable retries with exponential backoff, deduplication by jobId.</td></tr>
+    <tr><td><strong>node-cron</strong></td><td>Scheduled jobs</td><td>Run code at fixed intervals (every 5 min, daily 2 AM, etc.).</td></tr>
+    <tr><td><strong>Razorpay SDK</strong></td><td>Payment gateway</td><td>Indian payment processor — UPI, cards, netbanking.</td></tr>
+    <tr><td><strong>Joi</strong></td><td>Input validation</td><td>Validate request bodies, query params, route params with declarative schemas.</td></tr>
+    <tr><td><strong>jsonwebtoken</strong></td><td>JWT tokens</td><td>Stateless authentication, supports HS256 (dev) and RS256 (prod).</td></tr>
+    <tr><td><strong>bcrypt</strong></td><td>Password hashing</td><td>Slow on purpose — makes brute-force attacks impractical.</td></tr>
+    <tr><td><strong>helmet</strong></td><td>HTTP security headers</td><td>Sets defaults like X-Content-Type-Options, etc.</td></tr>
+    <tr><td><strong>winston</strong></td><td>Structured logging</td><td>JSON logs with trace IDs — searchable in production.</td></tr>
+    <tr><td><strong>opossum</strong></td><td>Circuit breaker</td><td>Stop hammering Sumago when it's clearly down.</td></tr>
+    <tr><td><strong>ioredis</strong></td><td>Redis client</td><td>Robust, supports clustering &amp; sentinel.</td></tr>
+    <tr><td><strong>multer</strong></td><td>File uploads</td><td>Handles CSV uploads for admin bulk enrollment.</td></tr>
+    <tr><td><strong>csv-parse / csv-stringify</strong></td><td>CSV parsing &amp; generation</td><td>Bulk enrollment imports &amp; report exports.</td></tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 4. PROJECT STRUCTURE ===================== -->
+<h1 class="section">4. Project Folder Structure</h1>
+
+<pre><code>kommon_school_backend/
+├── docs/                       # Markdown docs (course master, OpenAPI spec)
+├── logs/                       # Winston log output (rotated daily)
+├── scripts/                    # One-off scripts (seeds, backfills)
+├── src/
+│   ├── app.js                  # Express app: middleware + route registration
+│   ├── server.js               # Boot: HTTP listen, queues, jobs, graceful shutdown
+│   │
+│   ├── config/                 # Singletons & validated env
+│   │   ├── env.js              # Reads .env, validates, exports typed config
+│   │   ├── database.js         # Prisma client singleton
+│   │   ├── redis.js            # ioredis singleton
+│   │   ├── jwt.js              # JWT sign/verify (HS256 or RS256)
+│   │   ├── logger.js           # Winston logger
+│   │   └── constants.js        # HTTP codes, error codes, defaults
+│   │
+│   ├── middleware/             # Express middleware
+│   │   ├── auth.middleware.js          # Extract & verify Bearer token
+│   │   ├── rbac.middleware.js          # Role/permission checks
+│   │   ├── errorHandler.middleware.js  # Catches all errors → standard envelope
+│   │   ├── requestLogger.middleware.js # Per-request logging with traceId
+│   │   ├── rateLimit.middleware.js     # IP-based rate limit (login, etc.)
+│   │   ├── validate.middleware.js      # Joi validation runner
+│   │   └── webhookRaw.middleware.js    # Capture raw body for HMAC
+│   │
+│   ├── modules/                # One folder per feature
+│   │   ├── auth/               # Login, refresh, logout, change-password
+│   │   ├── enrollments/        # Public student enrollment + plan select
+│   │   ├── payments/           # Razorpay order create + verify
+│   │   ├── razorpay/           # Webhook handler from Razorpay
+│   │   ├── webhooks/           # Sumago user-sync webhook delivery
+│   │   ├── externalApi/        # Builds & sends payload to Sumago
+│   │   ├── followups/          # Marketing followup lifecycle
+│   │   ├── plans/              # Public + Admin plan/pricing CRUD
+│   │   ├── internalPlans/      # Admin-only internal plan CRUD
+│   │   ├── courses/            # Course master CRUD
+│   │   ├── courseNameMaster/   # Course name lookup CRUD
+│   │   ├── educationMaster/    # Education level master
+│   │   ├── durationMaster/     # Duration label master
+│   │   ├── promoCodes/         # Promo code validation
+│   │   ├── reports/            # Aggregations, CSV export
+│   │   ├── permissions/        # Permission DB lookup + cache
+│   │   ├── audit/              # Audit log read + write
+│   │   ├── adminEnrollments/   # Admin manual + bulk enrollment
+│   │   └── admin/              # Group: superadmin-only modules
+│   │       ├── users/                  # Admin user CRUD
+│   │       ├── razorpayConfigs/        # Encrypted Razorpay key mgmt
+│   │       ├── externalApiLogs/        # Read-only log viewer
+│   │       ├── dashboard/              # Dashboard counters
+│   │       ├── adminEnrollments/       # List view
+│   │       ├── adminPayments/          # List view
+│   │       └── adminFollowupsReport/   # Report view
+│   │
+│   ├── queues/                 # BullMQ
+│   │   ├── connection.js               # Shared ioredis connection
+│   │   ├── externalApi.queue.js        # Enqueue helpers
+│   │   ├── workers/externalApi.worker.js  # Job processor
+│   │   └── index.js                    # startQueues() / stopQueues()
+│   │
+│   ├── jobs/                   # node-cron scheduled jobs
+│   │   ├── paymentReconciliation.job.js   # Every 5 min
+│   │   ├── externalApiRetry.job.js        # Every 2 min
+│   │   ├── webhookRetry.job.js            # Every 3 min
+│   │   ├── enrollmentCleanup.job.js       # Daily 2 AM
+│   │   ├── refreshTokenCleanup.job.js     # Daily 3 AM
+│   │   ├── followupReminder.job.js        # Daily 9 AM
+│   │   └── index.js                       # startJobs() / stopJobs()
+│   │
+│   ├── prisma/
+│   │   ├── schema.prisma       # Database schema (single source of truth)
+│   │   ├── seed.js             # Seed superadmin + permissions
+│   │   └── migrations/         # Auto-generated SQL migration files
+│   │
+│   ├── tests/unit/             # Pure in-process unit tests
+│   ├── docs/                   # OpenAPI spec
+│   └── utils/                  # Shared helpers
+│       ├── ApiError.js                 # Custom error class
+│       ├── ApiResponse.js              # sendSuccess / sendError
+│       ├── asyncHandler.js             # Wraps async controllers
+│       ├── crypto.js                   # AES-256-GCM, HMAC, bcrypt
+│       ├── distributedLock.js          # Redis-based mutex
+│       └── pagination.js               # Parse page/limit/sort
+│
+├── ecosystem.config.js         # PM2 cluster config (production)
+├── nginx.conf.sample           # Reverse proxy template
+└── package.json</code></pre>
+
+<div class="tip">
+  <strong>Modules follow a consistent pattern:</strong> <code>routes.js</code> → <code>controller.js</code> → <code>service.js</code> → <code>repository.js</code>. Routes wire URLs to controllers; controllers parse requests; services hold business logic; repositories talk to Prisma. Validators sit beside controllers.
+</div>
+
+
+<!-- ===================== 5. SERVER STARTUP ===================== -->
+<h1 class="section">5. How the Server Starts (boot order)</h1>
+
+<p>When you run <code>npm start</code>, here's what happens, in order:</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant SH as Shell
+    participant SRV as server.js
+    participant APP as app.js
+    participant ENV as config/env.js
+    participant PG as PostgreSQL
+    participant RD as Redis
+    participant Q as BullMQ Worker
+    participant C as Cron Scheduler
+
+    SH->>SRV: node src/server.js
+    SRV->>APP: require('./app')
+    APP->>ENV: validate environment variables
+    ENV-->>APP: ok (or process.exit if missing)
+    APP->>APP: register middleware + routes
+    SRV->>SRV: app.listen(PORT)
+    SRV->>Q: startQueues() → Worker connects to Redis
+    SRV->>C: startJobs() → schedule 6 cron jobs
+    SRV->>PG: getPrismaClient() (eager connection)
+    PG-->>SRV: connection pool ready
+    Note over SRV: Server ready to accept traffic
+    SRV-->>SH: log "server_started"
+</div>
+
+<h3>Graceful shutdown</h3>
+<p>When SIGTERM (Ctrl+C, PM2 reload, Docker stop) arrives, the server doesn't just die. It:</p>
+<ol>
+  <li>Stops accepting new HTTP requests.</li>
+  <li>Stops scheduling new cron ticks (in-flight ticks finish).</li>
+  <li>Drains BullMQ workers — lets active jobs complete (up to 15s).</li>
+  <li>Disconnects Prisma cleanly.</li>
+  <li>Disconnects Redis.</li>
+  <li>Exits cleanly (or forces exit after 15s timeout).</li>
+</ol>
+
+
+<!-- ===================== 6. ENV VARS ===================== -->
+<h1 class="section">6. Configuration &amp; Environment Variables</h1>
+
+<p>Every config value lives in <code>.env</code>. The file <span class="file-ref">src/config/env.js</span> validates them at boot — if a required var is missing, the server refuses to start.</p>
+
+<h3>Required for any environment</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>DATABASE_URL</code></td><td>Postgres connection string</td></tr>
+    <tr><td><code>JWT_ACCESS_SECRET</code></td><td>32+ char secret for HS256 access tokens</td></tr>
+    <tr><td><code>JWT_REFRESH_SECRET</code></td><td>32+ char secret for HS256 refresh tokens</td></tr>
+    <tr><td><code>RAZORPAY_KEY_ID</code></td><td>Razorpay public key (seeded into DB)</td></tr>
+    <tr><td><code>RAZORPAY_KEY_SECRET</code></td><td>Razorpay secret (encrypted into DB)</td></tr>
+    <tr><td><code>RAZORPAY_WEBHOOK_SECRET</code></td><td>HMAC secret for webhook verification</td></tr>
+    <tr><td><code>ENCRYPTION_MASTER_KEY</code></td><td>32 bytes hex — encrypts secrets at rest</td></tr>
+    <tr><td><code>SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD</code></td><td>First superadmin created on seed</td></tr>
+  </tbody>
+</table>
+
+<h3>Required from Phase 2A onwards</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>REDIS_URL</code></td><td><code>redis://localhost:6379</code></td><td>Connection for BullMQ + locks</td></tr>
+    <tr><td><code>EXTERNAL_API_URL</code></td><td>(webhook.site default)</td><td>Sumago provisioning endpoint</td></tr>
+    <tr><td><code>EXTERNAL_API_TOKEN</code></td><td>—</td><td>Bearer token for Sumago</td></tr>
+    <tr><td><code>EXTERNAL_API_TIMEOUT_MS</code></td><td><code>15000</code></td><td>Per-call HTTP timeout</td></tr>
+  </tbody>
+</table>
+
+<h3>Optional tuning knobs (Phase 2B)</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it controls</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRON_TIMEZONE</code></td><td><code>UTC</code></td><td>Timezone for daily cron schedules</td></tr>
+    <tr><td><code>RECONCILIATION_PENDING_GRACE_MS</code></td><td><code>600000</code></td><td>Wait 10 min before checking Razorpay</td></tr>
+    <tr><td><code>RECONCILIATION_EXPIRE_AFTER_MS</code></td><td><code>1800000</code></td><td>Expire pending after 30 min</td></tr>
+    <tr><td><code>ENROLLMENT_CLEANUP_STALE_HOURS</code></td><td><code>24</code></td><td>Auto-expire submitted enrollments</td></tr>
+    <tr><td><code>WEBHOOK_RETRY_MAX_ATTEMPTS</code></td><td><code>5</code></td><td>Max replays per failed webhook</td></tr>
+  </tbody>
+</table>
+
+<div class="warn">
+  Never commit <code>.env</code> to git. The repo includes <code>.env.example</code> — copy it locally and fill in real secrets.
+</div>
+
+
+<!-- ===================== 7. DATABASE SCHEMA ===================== -->
+<h1 class="section">7. Database Schema Deep Dive</h1>
+
+<p>All schema is defined in <span class="file-ref">src/prisma/schema.prisma</span>. PostgreSQL is the source of truth — Redis is ephemeral, BullMQ jobs are recoverable from the DB.</p>
+
+<h2>Main entities</h2>
+
+<div class="mermaid">
+erDiagram
+    User ||--o{ RefreshToken : "has many"
+    User ||--o{ AuditLog : "actor of"
+    User ||--o{ Followup : "assigned to"
+    Enrollment ||--o{ Payment : "has many"
+    Enrollment ||--o{ ExternalApiLog : "sync attempts"
+    Enrollment ||--o{ Followup : "may have"
+    Enrollment }o--o| PlanPricing : "selected"
+    Enrollment }o--o| InternalPlan : "internal flow"
+    Payment }o--o| RazorpayConfiguration : "used config"
+    Plan ||--o{ PlanPricing : "tiered prices"
+    InternalPlan }o--|| CourseMaster : "for course"
+    CourseMaster }o--|| CourseNameMaster : "name"
+    CourseMaster }o--o| EducationMaster : "education"
+    CourseMaster }o--o| DurationMaster : "duration"
+    Followup ||--o{ FollowupNote : "timeline notes"
+    Permission ||--o{ RolePermission : "assigned to roles"
+
+    User { uuid id PK "role enum"  string email "unique" }
+    Enrollment { uuid id PK string email string enrollment_code "unique" enum status enum candidate_type "EXTERNAL/INTERNAL" enum external_sync_status }
+    Payment { uuid id PK string razorpay_order_id "unique" int amount enum status }
+    ExternalApiLog { uuid id PK enum status int attempts datetime next_attempt_at }
+    WebhookEvent { uuid id PK string event_id "unique" bool processed }
+    Followup { uuid id PK enum status uuid assigned_to }
+    InternalPlan { int id PK enum duration string ref_id "unique" json coupons }
+    Plan { int id PK enum tier "unique" }
+    PlanPricing { int id PK int duration_months decimal final_price }
+    RazorpayConfiguration { uuid id PK string key_id text key_secret_encrypted bool is_active }
+    AuditLog { uuid id PK string action string entity_type uuid actor_id }
+    Permission { uuid id PK string code "unique" }
+    RolePermission { uuid id PK enum role uuid permission_id }
+</div>
+
+<h2>Important enums</h2>
+
+<div class="grid-2">
+  <div class="card">
+    <h4>EnrollmentStatus</h4>
+    <code>submitted</code> → <code>payment_pending</code> → <code>paid</code> / <code>completed</code><br/>
+    On failure: <code>failed</code> or <code>expired</code><br/>
+    <small>Customer-facing payment lifecycle.</small>
+  </div>
+  <div class="card">
+    <h4>ExternalSyncStatus</h4>
+    <code>PENDING</code> → <code>SUCCESS</code> / <code>DEAD_LETTER</code><br/>
+    Or stuck at <code>FAILED</code> while retrying.<br/>
+    <small>Third-party (Sumago) sync state. <strong>Separate from EnrollmentStatus</strong> so the admin UI can show "paid but not yet provisioned".</small>
+  </div>
+  <div class="card">
+    <h4>PaymentStatus</h4>
+    <code>initiated</code> → <code>pending</code> → <code>success</code><br/>
+    Or: <code>failed</code>, <code>cancelled</code>, <code>expired</code>, <code>refunded</code>
+  </div>
+  <div class="card">
+    <h4>ExternalApiStatus (per log row)</h4>
+    <code>pending</code>, <code>processing</code>, <code>success</code>, <code>failed</code>, <code>retrying</code>, <code>dead_letter</code><br/>
+    <small>Tracked per attempt in <code>external_api_logs</code>.</small>
+  </div>
+  <div class="card">
+    <h4>FollowupStatus</h4>
+    <code>payment_pending</code>, <code>call_back_later</code>, <code>interested</code>, <code>not_interested</code>, <code>payment_completed</code>, <code>followup_closed</code>, <code>invalid_number</code>, <code>no_response</code><br/>
+    <small><code>payment_completed</code> &amp; <code>followup_closed</code> are terminal.</small>
+  </div>
+  <div class="card">
+    <h4>Role</h4>
+    <code>superadmin</code> (can do everything), <code>admin</code> (manage data), <code>marketing</code> (followups only)
+  </div>
+</div>
+
+<h2>Why both <code>candidate_type</code> and <code>external_sync_status</code>?</h2>
+<div class="donkey">
+  Think of an enrollment as a parcel.
+  <ul>
+    <li><code>candidate_type</code> = WHERE the parcel came from (the website front door or the admin office).</li>
+    <li><code>EnrollmentStatus</code> = whether the parcel was paid for (the postage stamp).</li>
+    <li><code>external_sync_status</code> = whether the parcel was actually delivered to Sumago (the destination).</li>
+  </ul>
+  These are independent because the parcel can be paid for but stuck in transit to Sumago.
+</div>
+
+
+<!-- ===================== 8. GOLDEN PATH ===================== -->
+<h1 class="section">8. The Golden Path — Student Enrollment Journey</h1>
+
+<p>This is the most important flow in the entire system. Memorize it.</p>
+
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as Student Browser
+    participant API as Express API
+    participant DB as PostgreSQL
+    participant RZ as Razorpay
+    participant Q as BullMQ Queue
+    participant W as Worker
+    participant SU as Sumago
+
+    Note over U,API: Step 1 — Submit "Enroll Now" form
+    U->>API: POST /api/v1/enrollments {name, email, phone}
+    API->>DB: BEGIN tx; SELECT FOR UPDATE on email
+    DB-->>API: existing row OR none
+    alt new enrollment
+        API->>DB: INSERT enrollment (status=submitted)
+    else resume
+        API->>DB: UPDATE enrollment with new form data
+    end
+    API->>DB: COMMIT
+    API-->>U: {id, enrollmentCode, created/resumed}
+
+    Note over U,API: Step 2 — Pick a plan
+    U->>API: PATCH /api/v1/enrollments/:id/plan {planPricingId}
+    API->>DB: validate plan ACTIVE; cancel stale orders; SET plan_pricing_id
+    API-->>U: ok
+
+    Note over U,RZ: Step 3 — Create Razorpay order
+    U->>API: POST /api/v1/enrollments/:id/payment-order
+    API->>DB: SELECT FOR UPDATE on enrollment
+    API->>DB: check no existing success payment
+    API->>RZ: orders.create({amount, currency})
+    RZ-->>API: {orderId}
+    API->>DB: INSERT Payment (status=initiated)
+    API->>DB: UPDATE enrollment.status = payment_pending; COMMIT
+    API-->>U: {paymentId, razorpayOrderId, keyId, amount}
+
+    Note over U,RZ: Step 4 — Pay with Razorpay
+    U->>RZ: Open Razorpay checkout, enter card/UPI
+    RZ-->>U: success + {paymentId, signature}
+
+    Note over U,API: Step 5 — Verify payment
+    U->>API: POST /api/v1/enrollments/:id/payment-verify
+    API->>API: HMAC(orderId|paymentId, secret) == signature ?
+    API->>DB: BEGIN tx (Serializable); SELECT FOR UPDATE on Payment
+    DB-->>API: latest row
+    alt already success
+        API-->>U: {status:success, alreadySettled:true}
+    else first to settle
+        API->>DB: UPDATE Payment.status=success
+        API->>DB: UPDATE Enrollment.status=paid; external_sync_status=PENDING
+        API->>DB: COMMIT
+        API->>Q: enqueueExternalApiSync(jobId=enrollmentId)
+        API-->>U: {status:success}
+    end
+
+    Note over Q,SU: Step 6 — Background sync (async)
+    Q->>W: Pick up job
+    W->>DB: load enrollment + payment
+    W->>SU: POST {firstName, email, phone, plan, transactionId...}
+    alt 2xx success
+        SU-->>W: 200
+        W->>DB: UPDATE external_sync_status=SUCCESS; log SUCCESS
+    else 5xx / timeout
+        SU-->>W: error
+        W->>DB: log RETRYING; throw
+        Note over Q: BullMQ retries with backoff 30s→60s→120s→240s→480s
+    else after 5 retries
+        W->>DB: external_sync_status=DEAD_LETTER; auto-create followup
+    end
+
+    Note over RZ,API: Step 7 — Razorpay webhook (parallel safety net)
+    RZ->>API: POST /api/v1/webhooks/razorpay payment.captured
+    API->>API: verify HMAC signature on raw body
+    API->>DB: idempotency check (event_id unique)
+    API->>DB: settlePayment() — same race-protected logic
+    API-->>RZ: 200 ok
+</div>
+
+<div class="donkey">
+  Read the diagram top to bottom like a story:
+  <ol>
+    <li>Student submits form → row created in DB.</li>
+    <li>Student picks plan → row updated with planPricingId.</li>
+    <li>Student clicks "Pay" → backend asks Razorpay for an order, stores it, returns the orderId.</li>
+    <li>Razorpay shows the payment popup. Student pays.</li>
+    <li>Razorpay sends payment success info back to the frontend. Frontend tells the backend "verify this".</li>
+    <li>Backend checks the signature (proof Razorpay sent it), marks the payment as paid, and queues a job to tell Sumago.</li>
+    <li>Worker picks up the job, calls Sumago. If it fails, retry up to 5 times. If still failing, mark dead-letter and create a marketing follow-up.</li>
+    <li>Meanwhile, Razorpay also sends a webhook to us directly — this is a safety net in case the frontend never called verify (e.g., browser crashed). The same race-protected code runs, whichever arrives first wins.</li>
+  </ol>
+</div>
+
+
+<!-- ===================== 9. AUTHENTICATION ===================== -->
+<h1 class="section">9. Authentication &amp; JWT Tokens</h1>
+
+<p><span class="file-ref">src/modules/auth/</span> + <span class="file-ref">src/config/jwt.js</span> + <span class="file-ref">src/middleware/auth.middleware.js</span></p>
+
+<h2>How login works</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant API as API
+    participant DB as DB
+
+    U->>API: POST /auth/login {email, password}
+    API->>DB: find user by email
+    DB-->>API: user row (or null)
+    API->>API: bcrypt.compare(password, hash) — always runs (timing safety)
+    alt password ok
+        API->>API: generate familyId (UUID)
+        API->>API: generate tokenId/jti (UUID)
+        API->>API: sign accessToken (15 min) — claims {sub, email, role}
+        API->>API: sign refreshToken (7 days) — claims {sub, fam, jti}
+        API->>DB: INSERT refresh_tokens (token_hash = SHA256(rawToken), family_id)
+        API->>DB: INSERT audit_logs (action=auth.login)
+        API-->>U: {accessToken, refreshToken, user}
+    else password wrong
+        API-->>U: 401 INVALID_CREDENTIALS
+    end
+</div>
+
+<h3>Why two tokens?</h3>
+<ul>
+  <li><strong>Access token (15 min):</strong> Sent on every request as <code>Authorization: Bearer ...</code>. Short-lived so a stolen one expires fast.</li>
+  <li><strong>Refresh token (7 days):</strong> Stored more carefully (httpOnly cookie or secure storage). Used only to get new access tokens.</li>
+</ul>
+
+<h2>Token rotation &amp; reuse detection</h2>
+
+<div class="donkey">
+  Imagine your refresh token is a movie ticket stub. Every time you use it to get a new access token, the box office <strong>punches a hole in it</strong> (marks it revoked) and gives you a brand new stub. If anyone tries to use the punched stub again, the box office knows it's stolen and <strong>cancels every ticket in your booking family</strong> — you have to log in again from scratch. This is called "refresh token rotation with reuse detection". It catches stolen tokens.
+</div>
+
+<h3>Family tracking</h3>
+<p>Every login creates a new <code>family_id</code>. Every refresh keeps the same <code>family_id</code> but creates a new <code>jti</code>. If a token in a family is ever reused after revocation, all tokens in that family are revoked.</p>
+
+<h2>JWT signing algorithms</h2>
+<table>
+  <thead><tr><th>Mode</th><th>Algorithm</th><th>When to use</th></tr></thead>
+  <tbody>
+    <tr><td>HS256</td><td>Symmetric (one secret)</td><td>Development, simple setups</td></tr>
+    <tr><td>RS256</td><td>Asymmetric (public/private keys)</td><td>Production — public key can be shared with services that need to verify but not sign</td></tr>
+  </tbody>
+</table>
+<p>The code in <code>config/jwt.js</code> auto-picks based on <code>JWT_ALGORITHM</code> env var.</p>
+
+<h2>Endpoints</h2>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill post">POST</span></td><td><code>/api/v1/auth/login</code></td><td><span class="pill pub">Public</span></td><td>Email + password → tokens</td></tr>
+    <tr><td><span class="pill post">POST</span></td><td><code>/api/v1/auth/refresh</code></td><td><span class="pill pub">Public</span></td><td>Refresh token → new pair</td></tr>
+    <tr><td><span class="pill post">POST</span></td><td><code>/api/v1/auth/logout</code></td><td><span class="pill auth">Bearer</span></td><td>Revoke all user tokens</td></tr>
+    <tr><td><span class="pill get">GET</span></td><td><code>/api/v1/auth/me</code></td><td><span class="pill auth">Bearer</span></td><td>Current user info</td></tr>
+    <tr><td><span class="pill post">POST</span></td><td><code>/api/v1/auth/change-password</code></td><td><span class="pill auth">Bearer</span></td><td>Old + new pwd → revokes all tokens</td></tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 10. RBAC ===================== -->
+<h1 class="section">10. RBAC — Roles &amp; Permissions</h1>
+
+<p>Two layers of access control are stacked:</p>
+
+<ol>
+  <li><strong>Coarse role check</strong> — <code>authorize(['admin', 'superadmin'])</code> from <span class="file-ref">middleware/rbac.middleware.js</span></li>
+  <li><strong>Granular permission check</strong> — <code>hasPermission('payments:retry')</code> using <span class="file-ref">permissions / role_permissions</span> tables</li>
+</ol>
+
+<h2>Default role × permission matrix</h2>
+<table>
+  <thead><tr><th>Permission code</th><th>superadmin</th><th>admin</th><th>marketing</th></tr></thead>
+  <tbody>
+    <tr><td><code>enrollments:view</code></td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><td><code>payments:view</code></td><td>yes</td><td>yes</td><td>no</td></tr>
+    <tr><td><code>payments:retry</code></td><td>yes</td><td>no</td><td>yes</td></tr>
+    <tr><td><code>followups:view</code></td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><td><code>followups:manage</code></td><td>yes</td><td>no</td><td>yes</td></tr>
+    <tr><td><code>razorpay_configs:manage</code></td><td>yes</td><td>no</td><td>no</td></tr>
+    <tr><td><code>users:manage</code></td><td>yes</td><td>no</td><td>no</td></tr>
+    <tr><td><code>reports:view</code></td><td>yes</td><td>yes</td><td>no</td></tr>
+    <tr><td><code>external_api_logs:view</code></td><td>yes</td><td>yes</td><td>no</td></tr>
+    <tr><td><code>audit_logs:view</code></td><td>yes</td><td>yes</td><td>no</td></tr>
+  </tbody>
+</table>
+
+<div class="tip">
+  <strong>Superadmin always passes.</strong> The middleware short-circuits on <code>role === 'superadmin'</code> without hitting the DB. Permission rows are still seeded for completeness, but they're not consulted.
+</div>
+
+<h3>In-process cache</h3>
+<p>The <code>hasPermission</code> middleware caches per-role permission lookups for <strong>60 seconds</strong>. Means: changing permissions in the DB propagates within a minute. To evict immediately, restart the process.</p>
+
+
+<!-- ===================== 11. ENROLLMENTS MODULE ===================== -->
+<h1 class="section">11. Enrollment Module Deep Dive</h1>
+
+<p><span class="file-ref">src/modules/enrollments/</span></p>
+
+<h2>The dual shape (new vs legacy)</h2>
+<div class="grid-2">
+  <div class="card">
+    <h4>New shape (public form)</h4>
+    <pre><code>{
+  "name": "Priya Sharma",
+  "email": "priya@example.com",
+  "phone": "9876543210",
+  "role": "STUDENT",
+  "education": "GRADUATE",
+  "readiness": "BEGINNER",
+  "source": "GOOGLE",
+  "promoCode": "EARLY10"
+}</code></pre>
+  </div>
+  <div class="card">
+    <h4>Legacy shape (Sumago taxonomy)</h4>
+    <pre><code>{
+  "first_name": "Priya",
+  "last_name": "Sharma",
+  "email": "priya@example.com",
+  "phone_number": "9876543210",
+  "plan": "SUMAGO30",
+  "group": "group_A",
+  "unit": "unit_01",
+  "phase": "phase_2",
+  "segment": "enterprise",
+  "amount": 99900
+}</code></pre>
+  </div>
+</div>
+
+<h2>Race-protected upsert pattern</h2>
+<div class="mermaid">
+flowchart TD
+    A[POST /enrollments] --> B{promoCode given?}
+    B -->|yes| C[Validate promo outside tx]
+    B -->|no| D[Start interactive transaction]
+    C --> D
+    D --> E[SELECT * FROM enrollments<br/>WHERE email=? FOR UPDATE]
+    E --> F{Row exists?}
+    F -->|yes| G{Already paid<br/>or has success payment?}
+    G -->|yes| H[409 STUDENT_ALREADY_REGISTERED]
+    G -->|no| I[UPDATE row with new data<br/>reset to 'submitted' if failed/expired]
+    F -->|no| J[INSERT new enrollment<br/>status=submitted]
+    I --> K[COMMIT]
+    J --> K
+    K --> L{P2002 unique violation?}
+    L -->|yes - racing insert| E
+    L -->|no| M[Return enrollment + created/resumed flag]
+</div>
+
+<h2>5-minute dedupe window</h2>
+<p>Before the transaction, the service checks: did this <code>(email, phone, status=submitted)</code> arrive in the last 5 minutes? If yes, return the existing row as-is. Reason: double-click protection — pressing the submit button twice shouldn't create two records.</p>
+
+<h2>Enrollment code format</h2>
+<p><code>KS-2605-A1B2C3</code></p>
+<ul>
+  <li><code>KS</code> — Kommon School prefix (constant)</li>
+  <li><code>2605</code> — current UTC year-month (YY + MM)</li>
+  <li><code>A1B2C3</code> — 6 random hex chars</li>
+</ul>
+
+
+<!-- ===================== 12. PAYMENT MODULE ===================== -->
+<h1 class="section">12. Payment Module Deep Dive</h1>
+
+<p><span class="file-ref">src/modules/payments/</span></p>
+
+<h2>Order creation flow</h2>
+<div class="mermaid">
+flowchart TD
+    A[POST /enrollments/:id/payment-order] --> B[BEGIN tx<br/>SELECT FOR UPDATE on enrollment]
+    B --> C{status is paid<br/>or completed?}
+    C -->|yes| Z1[409 STUDENT_ALREADY_REGISTERED]
+    C -->|no| D{Any payment with<br/>status=success exists?}
+    D -->|yes| Z1
+    D -->|no| E{plan_pricing_id set<br/>and ACTIVE?}
+    E -->|no| Z2[409 PLAN_NOT_SELECTED]
+    E -->|yes| F[List all payments for enrollment]
+    F --> G[Find reusable: status in<br/>initiated/pending AND amount matches]
+    G --> H{reusable exists?}
+    H -->|yes| I[Auto-cancel other stale orders]
+    I --> J[Return existing order]
+    H -->|no| K[Auto-cancel all stale orders]
+    K --> L[Call Razorpay.orders.create]
+    L --> M[INSERT Payment status=initiated<br/>store razorpay_config_id]
+    M --> N[UPDATE Enrollment status=payment_pending]
+    N --> O[COMMIT]
+    O --> J[Return order details]
+</div>
+
+<div class="donkey">
+  Imagine the student keeps refreshing the payment page. Each refresh hits this endpoint. Without protection, we'd create a fresh Razorpay order every time — confusing for everyone. The "reusable" logic finds an existing initiated order with the right amount and hands it back. Existing stale orders (wrong amount) get cancelled. <strong>At most one live Razorpay order per enrollment at any time.</strong>
+</div>
+
+<h2>Verification flow (race-protected settlement)</h2>
+<div class="mermaid">
+flowchart TD
+    A[POST /enrollments/:id/payment-verify<br/>{paymentId, orderId, razorpayPaymentId, signature}] --> B[Load Payment + razorpay_config]
+    B --> C[Verify HMAC-SHA256<br/>orderId#124;paymentId, keySecret<br/>== signature ?]
+    C -->|fail| Z1[401 PAYMENT_SIGNATURE_INVALID]
+    C -->|ok| D[Fetch actual payment from Razorpay]
+    D --> E[BEGIN tx Serializable<br/>SELECT FOR UPDATE on Payment]
+    E --> F{Payment already<br/>status=success?}
+    F -->|yes| G[Return alreadySettled:true]
+    F -->|no| H{amount matches<br/>expected?}
+    H -->|no| Z2[409 + mark payment failed]
+    H -->|yes| I[UPDATE Payment.status=success]
+    I --> J[UPDATE Enrollment.status=paid<br/>external_sync_status=PENDING<br/>amount_paid_paise=actualAmount]
+    J --> K[COMMIT]
+    K --> L[Enqueue external API sync<br/>fallback to inline if Redis down]
+    L --> M[Fire enrollment webhook<br/>via setImmediate non-blocking]
+    M --> N[Return success]
+</div>
+
+<h2>Why SELECT FOR UPDATE?</h2>
+<div class="donkey">
+  Two paths can settle the same payment: (1) the student's browser calling <code>/verify</code>, (2) Razorpay's server sending a webhook to us. They could arrive at the exact same millisecond. Without locking, both might:
+  <ol>
+    <li>Read the Payment row (both see status='initiated').</li>
+    <li>Both update to status='success'.</li>
+    <li>Both enqueue a Sumago sync → two emails to the student!</li>
+  </ol>
+  <code>SELECT FOR UPDATE</code> says "the first one to read this row locks it; the second one waits at the door". When the second one finally gets in, it sees status='success' already and returns "alreadySettled" without doing anything. This is the most important pattern in the codebase.
+</div>
+
+
+<!-- ===================== 13. RAZORPAY WEBHOOK ===================== -->
+<h1 class="section">13. Razorpay Webhook Handling</h1>
+
+<p><span class="file-ref">src/modules/razorpay/webhook.controller.js</span> + <span class="file-ref">src/middleware/webhookRaw.middleware.js</span></p>
+
+<p>Razorpay independently sends events to <code>POST /api/v1/webhooks/razorpay</code> when payments happen. We trust these less than the verify endpoint (because the signature is the only proof), so verification is strict.</p>
+
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant RZ as Razorpay
+    participant MW as webhookRaw middleware
+    participant CTL as webhook.controller
+    participant DB as DB
+
+    RZ->>MW: POST /webhooks/razorpay {body} + x-razorpay-signature
+    MW->>MW: Capture raw bytes BEFORE express.json()
+    MW->>CTL: pass through req.rawBody
+    CTL->>CTL: HMAC-SHA256(rawBody, webhook_secret) == signature?
+    alt invalid
+        CTL-->>RZ: 401 (but Razorpay will retry — that's fine)
+    else valid
+        CTL->>DB: INSERT webhook_events ON CONFLICT (event_id) DO NOTHING
+        alt duplicate event
+            CTL-->>RZ: 200 (idempotent — already processed)
+        else new event
+            CTL->>CTL: dispatch by event_type
+            alt payment.captured / order.paid
+                CTL->>DB: settlePayment() — same race-protected logic
+            else payment.failed
+                CTL->>DB: mark payment failed if not already settled
+            end
+            CTL->>DB: UPDATE webhook_events SET processed=true
+            CTL-->>RZ: 200
+        end
+    end
+</div>
+
+<h3>Why raw body?</h3>
+<p>Express normally parses JSON and discards the original bytes. HMAC verification needs the <strong>exact</strong> bytes Razorpay signed — even a single whitespace change breaks the signature. So <code>webhookRaw</code> middleware captures the raw buffer before <code>express.json()</code> can mangle it. Notice in <code>app.js</code> that the webhook route is registered BEFORE <code>app.use(express.json())</code>.</p>
+
+<h3>Idempotency by event_id</h3>
+<p>Razorpay retries failed webhooks. The <code>webhook_events.event_id</code> column is UNIQUE — a second arrival of the same event_id fails the INSERT, signaling "already processed". We respond 200 immediately without re-processing.</p>
+
+<h3>Always 200</h3>
+<p>Even if internal processing fails, we return 200 to Razorpay. Otherwise they retry. We record the failure in <code>webhook_events</code> and a cron (<code>webhook_retry</code>) replays it later.</p>
+
+
+<!-- ===================== 14. EXTERNAL API SYNC ===================== -->
+<h1 class="section">14. External API Sync (Sumago)</h1>
+
+<p><span class="file-ref">src/modules/externalApi/</span> + <span class="file-ref">src/queues/workers/externalApi.worker.js</span></p>
+
+<h2>What is Sumago?</h2>
+<p>Sumago is the LMS (Learning Management System) that actually delivers the course. After payment, we have to <strong>provision</strong> the student there — telling Sumago "this person paid, give them access to course X".</p>
+
+<h2>The provisioning flow</h2>
+<div class="mermaid">
+flowchart LR
+    A[Payment settled] --> B[external_sync_status = PENDING]
+    B --> C[Enqueue BullMQ job<br/>jobId = enrollmentId]
+    C --> D[Worker picks job]
+    D --> E[Load enrollment + payment from DB]
+    E --> F[Build payload:<br/>firstName, lastName, email,<br/>phoneNumber, plan, group,<br/>unit, phase, segment,<br/>transactionId, amount]
+    F --> G[POST to EXTERNAL_API_URL<br/>+ Bearer token<br/>+ X-Idempotency-Key: enrollmentId<br/>+ 15s timeout]
+    G --> H{response}
+    H -->|2xx| I[external_api_log = SUCCESS<br/>enrollment.external_sync_status = SUCCESS]
+    H -->|409 already synced| I
+    H -->|400/422| J[FAILED terminal<br/>no retry]
+    H -->|5xx / timeout / network| K[RETRYING]
+    K --> L{attempt &lt; 5?}
+    L -->|yes| M[Throw → BullMQ retries<br/>30s, 60s, 120s, 240s, 480s]
+    L -->|no| N[DEAD_LETTER<br/>create marketing followup]
+    M --> D
+</div>
+
+<h2>Circuit breaker (opossum)</h2>
+<div class="donkey">
+  If Sumago is clearly down (50% of calls failing), instead of hammering it 100 times in a minute we "open the circuit" — every call fails instantly for 30 seconds. Then we try one to see if it's back. This protects Sumago from a thundering-herd of retries AND saves our worker's time.
+</div>
+
+<h2>Sumago user mirror sync</h2>
+<p><span class="file-ref">src/modules/webhooks/sumagoUserSync.service.js</span></p>
+<p>We also <strong>pull</strong> user data from Sumago periodically into our <code>sumago_users</code> table so the admin UI can list provisioned users without hitting Sumago on every page load.</p>
+<ul>
+  <li>Calls <code>GET /integrations/get-users</code></li>
+  <li>For each user, computes SHA-256 hash of payload</li>
+  <li>Buckets into NEW / CHANGED / UNCHANGED</li>
+  <li>Bulk-inserts new, updates changed, touches lastSyncedAt on unchanged</li>
+</ul>
+
+
+<!-- ===================== 15. BULLMQ ===================== -->
+<h1 class="section">15. BullMQ Queues &amp; Workers</h1>
+
+<p><span class="file-ref">src/queues/</span></p>
+
+<h2>The queue</h2>
+<p>There's <strong>one queue</strong>: <code>external-api-sync</code>. All Sumago provisioning jobs go through it.</p>
+
+<h2>Job configuration</h2>
+<table>
+  <thead><tr><th>Setting</th><th>Value</th><th>Reason</th></tr></thead>
+  <tbody>
+    <tr><td>attempts</td><td>5</td><td>5 total tries before dead-letter</td></tr>
+    <tr><td>backoff</td><td>exponential, 30s base</td><td>30 → 60 → 120 → 240 → 480 seconds</td></tr>
+    <tr><td>removeOnComplete</td><td>keep last 1000</td><td>For audit, browseable in BullMQ UI</td></tr>
+    <tr><td>removeOnFail</td><td>false (keep all)</td><td>Failed jobs preserved indefinitely</td></tr>
+    <tr><td>jobId</td><td>= enrollmentId</td><td>BullMQ deduplicates concurrent enqueues with same id</td></tr>
+    <tr><td>worker concurrency</td><td>5</td><td>Process 5 jobs in parallel per worker</td></tr>
+    <tr><td>rate limiter</td><td>50 jobs/sec</td><td>Don't overwhelm Sumago</td></tr>
+  </tbody>
+</table>
+
+<h2>Worker lifecycle events</h2>
+<div class="grid-2">
+  <div class="card">
+    <h4>completed</h4>
+    Log success. external_api_log row already marked SUCCESS by the sync function.
+  </div>
+  <div class="card">
+    <h4>failed</h4>
+    <ul>
+      <li>If attempts exhausted: dead-letter + create followup</li>
+      <li>Else: log transient failure, BullMQ will retry</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Idempotency at the queue level</h2>
+<div class="donkey">
+  Imagine you double-click "verify payment". Both clicks enqueue a sync job. With jobId = enrollmentId, BullMQ sees the second one and discards it silently (while the first is still waiting or active). Without this, you'd risk calling Sumago twice for the same student.
+</div>
+
+
+<!-- ===================== 16. CRON JOBS ===================== -->
+<h1 class="section">16. Cron Jobs &amp; Distributed Locks</h1>
+
+<p><span class="file-ref">src/jobs/</span> + <span class="file-ref">src/utils/distributedLock.js</span></p>
+
+<h2>Why distributed locks?</h2>
+<div class="donkey">
+  Say you scale to 3 server instances (instance-A, instance-B, instance-C). Each one has its own cron scheduler. At 2:00 AM, all three try to "expire stale enrollments". Without coordination, you'd do the same work three times. Distributed locks ensure only ONE instance does it. The other two see "lock is held" and skip cleanly.
+</div>
+
+<h2>The lock mechanism</h2>
+<p>Uses Redis <code>SET key value NX EX ttl</code> (atomic set-if-not-exists with expiry). The "value" is a random UUID per acquire. To release, a Lua script checks the value matches before DELETE — so if the lock expired and someone else grabbed it, we don't accidentally release theirs.</p>
+
+<h2>The six scheduled jobs</h2>
+<table>
+  <thead><tr><th>Job</th><th>Cron</th><th>Lock TTL</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>payment_reconciliation</code></td>
+      <td><code>*/5 * * * *</code></td>
+      <td>4.5 min</td>
+      <td>For payments pending &gt; 10 min, ask Razorpay the real status. Settle captured ones. Expire uncaptured after 30 min.</td>
+    </tr>
+    <tr>
+      <td><code>external_api_retry</code></td>
+      <td><code>*/2 * * * *</code></td>
+      <td>1.75 min</td>
+      <td>Reschedule external_api_log rows stuck at <code>retrying</code> (e.g., after Redis restart wiped in-memory BullMQ jobs).</td>
+    </tr>
+    <tr>
+      <td><code>webhook_retry</code></td>
+      <td><code>*/3 * * * *</code></td>
+      <td>2.75 min</td>
+      <td>Replay <code>webhook_events</code> rows with <code>processed=false</code> and attempts &lt; 5.</td>
+    </tr>
+    <tr>
+      <td><code>enrollment_cleanup</code></td>
+      <td><code>0 2 * * *</code></td>
+      <td>10 min</td>
+      <td>Expire <code>submitted</code> enrollments older than 24h.</td>
+    </tr>
+    <tr>
+      <td><code>refresh_token_cleanup</code></td>
+      <td><code>0 3 * * *</code></td>
+      <td>10 min</td>
+      <td>Hard-delete revoked/expired refresh tokens older than 30 days.</td>
+    </tr>
+    <tr>
+      <td><code>followup_reminder</code></td>
+      <td><code>0 9 * * *</code></td>
+      <td>5 min</td>
+      <td>Find followups with <code>next_followup_date &lt;= now</code> and log them grouped by assignee.</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 17. ADMIN MODULES ===================== -->
+<h1 class="section">17. Admin Modules Overview</h1>
+
+<p>Routes prefixed with <code>/api/v1/admin/</code> all require Bearer token + appropriate role.</p>
+
+<h2>Admin Users (superadmin only)</h2>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill post">POST</span></td><td><code>/admin/users</code></td><td>Create admin/marketing user</td></tr>
+    <tr><td><span class="pill get">GET</span></td><td><code>/admin/users</code></td><td>List with search, filter, sort</td></tr>
+    <tr><td><span class="pill patch">PATCH</span></td><td><code>/admin/users/:id</code></td><td>Update role or password (cannot modify self)</td></tr>
+    <tr><td><span class="pill del">DELETE</span></td><td><code>/admin/users/:id</code></td><td>Soft-delete + revoke tokens (cannot delete self)</td></tr>
+  </tbody>
+</table>
+
+<h2>Razorpay Configs (superadmin only)</h2>
+<p>Multiple configurations can exist; only ONE is active at a time. Secrets stored encrypted with AES-256-GCM using <code>ENCRYPTION_MASTER_KEY</code>.</p>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill post">POST</span></td><td><code>/admin/razorpay-configs</code></td><td>Create new config (inactive by default)</td></tr>
+    <tr><td><span class="pill patch">PATCH</span></td><td><code>/admin/razorpay-configs/:id/activate</code></td><td>Atomic activation: deactivate others + activate this</td></tr>
+    <tr><td><span class="pill del">DELETE</span></td><td><code>/admin/razorpay-configs/:id</code></td><td>Hard-delete (refuses if active)</td></tr>
+  </tbody>
+</table>
+
+<h2>Dashboard (reports:view)</h2>
+<p><code>GET /admin/dashboard</code> — Today's enrollment count, today's revenue, pending payments, pending follow-ups. Used by the admin home page.</p>
+
+<h2>Admin enrollments — manual &amp; bulk</h2>
+<p><span class="file-ref">src/modules/adminEnrollments/</span></p>
+<ul>
+  <li><strong>Manual:</strong> POST one enrollment with an internal plan + coupon snapshot.</li>
+  <li><strong>Bulk:</strong> Upload CSV. The <code>candidate_type</code> auto-sets to <code>INTERNAL</code>. Uses multer for file upload + csv-parse.</li>
+</ul>
+
+<h2>Reports</h2>
+<table>
+  <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /reports/payments-summary</code></td><td>Counts &amp; totals by status</td></tr>
+    <tr><td><code>GET /reports/enrollments-funnel</code></td><td>Count in each EnrollmentStatus stage</td></tr>
+    <tr><td><code>GET /reports/external-api-health</code></td><td>Sync health + recent dead-letters</td></tr>
+    <tr><td><code>GET /reports/export?type=payments</code></td><td>Streaming CSV download</td></tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 18. MIDDLEWARE ===================== -->
+<h1 class="section">18. Middleware Stack</h1>
+
+<p>Order of execution for a normal API request (from <code>app.js</code>):</p>
+
+<div class="mermaid">
+flowchart LR
+    A[Request] --> B[helmet<br/>security headers]
+    B --> C[CORS preflight<br/>cache-control: no-store]
+    C --> D[cors middleware]
+    D --> E[compression]
+    E --> F[requestLogger<br/>+ traceId attach]
+    F --> G{route is webhook?}
+    G -->|yes| H[webhookRaw<br/>capture rawBody]
+    G -->|no| I[express.json 1mb]
+    I --> J[globalLimiter]
+    J --> K[Route handler]
+    H --> K
+    K --> L{has auth?}
+    L -->|yes| M[auth.middleware<br/>verify JWT, attach req.user]
+    L -->|no| N[asyncHandler wraps controller]
+    M --> O{has perm?}
+    O -->|yes| P[hasPermission middleware]
+    O -->|no| N
+    P --> N
+    N --> Q[Service layer]
+    Q --> R[Repository → Prisma → DB]
+    R --> S[sendSuccess / sendError]
+    S --> T[errorHandler if thrown]
+    T --> U[Response]
+</div>
+
+<h2>Each middleware in one line</h2>
+<table>
+  <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>requestLogger.middleware.js</code></td><td>Generate traceId, log method+path+status+duration</td></tr>
+    <tr><td><code>auth.middleware.js</code></td><td>Parse Bearer header, verify JWT, attach <code>req.user</code></td></tr>
+    <tr><td><code>rbac.middleware.js</code></td><td><code>authorize([roles])</code> and <code>hasPermission(code)</code></td></tr>
+    <tr><td><code>validate.middleware.js</code></td><td>Run Joi schema against body/params/query, throw 422 if invalid</td></tr>
+    <tr><td><code>rateLimit.middleware.js</code></td><td>express-rate-limit per IP — login limiter + global limiter</td></tr>
+    <tr><td><code>webhookRaw.middleware.js</code></td><td>Capture raw buffer for HMAC (must be before express.json)</td></tr>
+    <tr><td><code>errorHandler.middleware.js</code></td><td>Centralised catch: ApiError → typed envelope, Prisma errors → friendly codes, anything else → 500</td></tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 19. API RESPONSE PATTERN ===================== -->
+<h1 class="section">19. API Response Pattern</h1>
+
+<p><span class="file-ref">src/utils/ApiResponse.js</span> + <span class="file-ref">src/utils/ApiError.js</span></p>
+
+<h2>Success envelope</h2>
+<pre><code>{
+  "success": true,
+  "data": { /* the payload */ },
+  "message": "optional human message",
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 100,
+    "totalPages": 5
+  }
+}</code></pre>
+
+<h2>Error envelope</h2>
+<pre><code>{
+  "success": false,
+  "error": {
+    "code": "PLAN_NOT_SELECTED",
+    "message": "A subscription plan must be selected before proceeding to payment",
+    "details": { /* optional structured info */ }
+  },
+  "traceId": "9f3e3c1b-..."
+}</code></pre>
+
+<h2>Throwing errors in services</h2>
+<pre><code>const { ApiError } = require('../../utils/ApiError');
+const { HTTP, ERROR_CODES } = require('../../config/constants');
+
+if (!enrollment.plan_pricing_id) {
+  throw new ApiError(
+    HTTP.CONFLICT,
+    ERROR_CODES.PLAN_NOT_SELECTED,
+    'Pick a plan first',
+    { enrollmentId }
+  );
+}
+</code></pre>
+<p>The <code>errorHandler</code> middleware catches it and emits the standardised envelope automatically.</p>
+
+<div class="tip">
+  Every response carries an <code>X-Trace-Id</code> header. When a customer complains about a failed payment, ask for the trace id — you can grep logs across all instances to find the entire request path in seconds.
+</div>
+
+
+<!-- ===================== 20. ERROR HANDLING ===================== -->
+<h1 class="section">20. Error Handling Strategy</h1>
+
+<h2>Five categories</h2>
+<ol>
+  <li><strong>Validation errors</strong> — Joi rejects → 422 with field details</li>
+  <li><strong>Authorization errors</strong> — Missing/invalid token → 401; insufficient role/permission → 403</li>
+  <li><strong>Business rule errors</strong> — Thrown as <code>ApiError</code> with a code → maps to a specific HTTP status</li>
+  <li><strong>Prisma errors</strong> — P2002 unique violation, P2025 not found, etc. → friendly codes</li>
+  <li><strong>Unexpected errors</strong> — Anything else → 500 generic + full log with stack + traceId</li>
+</ol>
+
+<h2>The graceful degradation principle</h2>
+<ul>
+  <li>If Redis is down → enqueue fails → fall back to inline HTTP call to Sumago (fire-and-forget).</li>
+  <li>If Sumago is down → BullMQ retries → eventually dead-letter → marketing follow-up auto-created.</li>
+  <li>If Razorpay webhook signature fails → respond 401 but always 200 on processed-but-errored (let Razorpay retry).</li>
+  <li>If audit log write fails → log and continue (never block a business action).</li>
+</ul>
+
+
+<!-- ===================== 21. EDGE CASES ===================== -->
+<h1 class="section">21. Important Edge Cases (Memorize These)</h1>
+
+<table>
+  <thead><tr><th>#</th><th>Scenario</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Student double-clicks "Submit"</td><td>5-min dedupe window returns existing row; no duplicate.</td></tr>
+    <tr><td>2</td><td>Student double-clicks "Pay"</td><td><code>SELECT FOR UPDATE</code> serializes; same Razorpay order returned twice.</td></tr>
+    <tr><td>3</td><td>Razorpay sends webhook twice for same event</td><td>UNIQUE constraint on <code>event_id</code> + 200 response; no double processing.</td></tr>
+    <tr><td>4</td><td>Verify endpoint &amp; Razorpay webhook arrive at same ms</td><td>Whichever locks the Payment row first wins. Loser sees status=success and exits idempotently.</td></tr>
+    <tr><td>5</td><td>Student closes browser after Razorpay but before /verify</td><td>The webhook (independent path) will settle the payment.</td></tr>
+    <tr><td>6</td><td>Razorpay webhook never arrives AND /verify never called</td><td><code>payment_reconciliation</code> cron checks Razorpay every 5 min; settles or expires.</td></tr>
+    <tr><td>7</td><td>Sumago returns 5xx</td><td>BullMQ retries 5x with backoff. After all fail → DEAD_LETTER + auto-followup.</td></tr>
+    <tr><td>8</td><td>Sumago returns 409 ALREADY_SYNCED</td><td>Treated as success — the student is already in Sumago.</td></tr>
+    <tr><td>9</td><td>Sumago returns 400/422 (bad data)</td><td>Terminal — no retry, marked FAILED in logs.</td></tr>
+    <tr><td>10</td><td>Redis crashes during work</td><td>HTTP server stays up; new payment verifies fall back to inline Sumago call.</td></tr>
+    <tr><td>11</td><td>BullMQ loses jobs after Redis restart</td><td><code>external_api_retry</code> cron finds rows stuck at <code>retrying</code> and reschedules.</td></tr>
+    <tr><td>12</td><td>Multiple instances run cron at same time</td><td>Distributed locks via Redis — only one acquires; others log "skipped".</td></tr>
+    <tr><td>13</td><td>Razorpay key rotated mid-flight</td><td>Payment row stores <code>razorpay_config_id</code> at order time — verification uses original config.</td></tr>
+    <tr><td>14</td><td>User leaves payment_pending for days</td><td>30-min Razorpay timeout → expired status; followup may be auto-created.</td></tr>
+    <tr><td>15</td><td>Stolen refresh token reused</td><td>Family-based revocation — entire family invalidated, forces re-login.</td></tr>
+  </tbody>
+</table>
+
+
+<!-- ===================== 22. LOCAL SETUP ===================== -->
+<h1 class="section">22. Local Development Setup</h1>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>Node.js 20 or higher</li>
+  <li>PostgreSQL 15</li>
+  <li>Redis 7</li>
+  <li>A Razorpay test account (get keys from dashboard)</li>
+</ul>
+
+<h2>Step-by-step</h2>
+<pre><code># 1. Clone &amp; install
+git clone &lt;repo&gt;
+cd kommon_school_backend
+npm ci
+
+# 2. Set up .env
+cp .env.example .env
+# Open .env and fill in:
+#   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kommon
+#   JWT_ACCESS_SECRET (32+ random chars)
+#   JWT_REFRESH_SECRET (32+ random chars)
+#   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
+#   ENCRYPTION_MASTER_KEY: run this to generate:
+#     node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+#   SEED_ADMIN_EMAIL=you@example.com
+#   SEED_ADMIN_PASSWORD=ChangeMe123!
+#   REDIS_URL=redis://localhost:6379
+
+# 3. Start Postgres &amp; Redis
+# (Postgres via your OS package manager; Redis: docker run -d -p 6379:6379 redis:7-alpine)
+
+# 4. Run migrations
+npx prisma migrate dev
+
+# 5. Seed superadmin + permissions + razorpay config
+npm run db:seed
+
+# 6. Start dev server (auto-reload)
+npm run dev
+
+# 7. Verify
+curl http://localhost:3000/health   # should return {"status":"ok"}
+</code></pre>
+
+<h2>Smoke test the golden path</h2>
+<pre><code># Login as superadmin
+curl -X POST http://localhost:3000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"ChangeMe123!"}'
+# → save accessToken
+
+# Create enrollment (no auth needed)
+curl -X POST http://localhost:3000/api/v1/enrollments \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Test User","email":"test@example.com","phone":"9999999999"}'
+
+# Pick a plan
+curl -X PATCH http://localhost:3000/api/v1/enrollments/&lt;id&gt;/plan \
+  -H 'Content-Type: application/json' \
+  -d '{"planPricingId":1}'
+
+# Create Razorpay order
+curl -X POST http://localhost:3000/api/v1/enrollments/&lt;id&gt;/payment-order
+
+# (use the orderId in the frontend Razorpay checkout to complete payment)
+</code></pre>
+
+<h2>Run tests</h2>
+<pre><code>npm test
+# Runs node --test on src/tests/unit/*.test.js
+# Pure in-process, no DB or Redis required</code></pre>
+
+
+<!-- ===================== 23. GLOSSARY ===================== -->
+<h1 class="section">23. Glossary of Terms</h1>
+
+<table>
+  <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Idempotency</strong></td><td>Calling the same operation twice produces the same result as once. Critical for retries and webhooks.</td></tr>
+    <tr><td><strong>HMAC</strong></td><td>Hash-based Message Authentication Code. A way to prove a message came from someone who knows a shared secret. Used by Razorpay signatures.</td></tr>
+    <tr><td><strong>JWT (JSON Web Token)</strong></td><td>A signed token containing claims. Server can verify it without DB lookup.</td></tr>
+    <tr><td><strong>HS256 / RS256</strong></td><td>JWT signing algorithms. HS256 uses one shared secret; RS256 uses public/private key pairs.</td></tr>
+    <tr><td><strong>Refresh token rotation</strong></td><td>Each refresh issues a new refresh token and invalidates the old one. Helps detect token theft.</td></tr>
+    <tr><td><strong>RBAC</strong></td><td>Role-Based Access Control. Users have roles, roles have permissions.</td></tr>
+    <tr><td><strong>SELECT FOR UPDATE</strong></td><td>Postgres feature to lock a row inside a transaction. Other transactions wait until commit/rollback.</td></tr>
+    <tr><td><strong>Serializable isolation</strong></td><td>Strictest Postgres isolation level. Treats concurrent transactions as if they happened one after another.</td></tr>
+    <tr><td><strong>Race condition</strong></td><td>Bug where the outcome depends on which of two concurrent operations finishes first.</td></tr>
+    <tr><td><strong>Circuit breaker</strong></td><td>Pattern that stops calling a failing service for a cooldown period, then probes if it's back.</td></tr>
+    <tr><td><strong>Exponential backoff</strong></td><td>Retry wait doubles each time (30s, 60s, 120s, ...). Avoids hammering a struggling service.</td></tr>
+    <tr><td><strong>Dead-letter</strong></td><td>A job that exhausted all retries. Set aside for manual investigation.</td></tr>
+    <tr><td><strong>Webhook</strong></td><td>An HTTP callback. Service A pushes events to service B's endpoint when things happen.</td></tr>
+    <tr><td><strong>Cron expression</strong></td><td><code>* * * * *</code> = minute hour day-of-month month day-of-week. <code>*/5 * * * *</code> = every 5 minutes.</td></tr>
+    <tr><td><strong>Distributed lock</strong></td><td>A coordination primitive ensuring only one process holds a "permission slip" at a time, across machines.</td></tr>
+    <tr><td><strong>Trace ID</strong></td><td>UUID attached to every request. Threads through all logs so you can trace one request end-to-end.</td></tr>
+    <tr><td><strong>Prisma</strong></td><td>An ORM — describes the DB schema in one file (<code>schema.prisma</code>) and generates a typed client.</td></tr>
+    <tr><td><strong>Migration</strong></td><td>A versioned SQL change to the DB schema. Prisma generates them when <code>schema.prisma</code> changes.</td></tr>
+    <tr><td><strong>BullMQ</strong></td><td>A Node.js job queue backed by Redis with retries, scheduling, and concurrency control.</td></tr>
+    <tr><td><strong>PM2</strong></td><td>Process manager for Node.js — clustering, log rotation, zero-downtime reload.</td></tr>
+    <tr><td><strong>Sumago</strong></td><td>The external Learning Management System we provision students into after payment.</td></tr>
+    <tr><td><strong>paise</strong></td><td>1/100 of an Indian Rupee. Razorpay (and our amounts) are stored in paise to avoid floats — ₹999 = 99900 paise.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <p>Kommon School Backend Developer Onboarding Guide<br/>
+  Generated for sumagodev1@gmail.com &middot; 2026-05-22<br/>
+  Total flow: Student → Enrollment → Payment → Razorpay → Sumago</p>
+</footer>
+
+</main>
+
+</body>
+</html>

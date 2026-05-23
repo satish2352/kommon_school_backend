@@ -117,10 +117,14 @@ function buildWorker() {
           await externalRepo.markDeadLetter(log.id, err && err.message);
         }
 
-        // Mark enrollment as terminally failed so downstream processes
-        // (reconciliation, UI) reflect the correct state.
+        // Flag the enrollment's THIRD-PARTY sync state — NOT the
+        // customer-facing `status` column. The customer paid; that's
+        // a fact about the customer. Our inability to push them to the
+        // external system is a fact about US, surfaced separately so
+        // an admin can press "Retry sync" once the upstream issue
+        // (dead webhook URL, rate-limit, etc.) is resolved.
         const enrollmentRepo = require('../../modules/enrollments/enrollment.repository');
-        await enrollmentRepo.updateEnrollmentStatus(enrollmentId, 'failed');
+        await enrollmentRepo.updateExternalSyncStatus(enrollmentId, 'DEAD_LETTER');
 
         logger.error({
           msg: 'external_api_dead_letter',

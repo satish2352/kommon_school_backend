@@ -82,10 +82,23 @@ async function settlePayment({ paymentId, razorpayPaymentId, razorpaySignature, 
         },
       });
 
-      // Update enrollment to paid
+      // Update enrollment:
+      //  * status='paid'                    — terminal payment lifecycle state.
+      //  * amount_paid_paise=actualAmount   — so the admin UI can show "₹X
+      //    received" without joining to payments[]. Public-flow rows were
+      //    leaving this at 0 because only the admin-internal path was
+      //    writing it (bug surfaced by the SumagoUsers page).
+      //  * external_sync_status='PENDING'   — we're about to enqueue the
+      //    Sumago webhook job; the worker will flip this to SUCCESS or
+      //    DEAD_LETTER. Separate from `status` so a sync failure no
+      //    longer pollutes the customer-facing payment state.
       await tx.enrollment.update({
         where: { id: enrollmentId },
-        data: { status: 'paid' },
+        data: {
+          status:               'paid',
+          amount_paid_paise:    Number(actualAmount),
+          external_sync_status: 'PENDING',
+        },
       });
 
       return { alreadySettled: false };

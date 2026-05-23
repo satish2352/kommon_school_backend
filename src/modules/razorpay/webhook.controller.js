@@ -140,9 +140,10 @@ async function handlePaymentSuccess(payload, traceId) {
   });
 
   if (!result.alreadySettled) {
-    // Transition enrollment to sync_pending then enqueue external sync.
-    await enrollmentRepo.updateEnrollmentStatus(payment.enrollment_id, 'sync_pending');
-
+    // settlePayment() already set enrollment.status='paid' AND
+    // external_sync_status='PENDING' inside the transaction. No further
+    // mutation needed here — the older code flipped to 'sync_pending'
+    // which conflated payment lifecycle with sync state.
     try {
       await enqueueExternalApiSync({
         enrollmentId: payment.enrollment_id,

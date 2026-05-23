@@ -16,6 +16,11 @@ const createCourseSchema = Joi.object({
   status:              Joi.string().valid('ACTIVE', 'INACTIVE').optional(),
   educationId:         Joi.number().integer().positive().optional().allow(null),
   durationId:          Joi.number().integer().positive().optional().allow(null),
+  // Sumago taxonomy overrides — see schema.prisma comments on CourseMaster.
+  sumagoGroup:         Joi.string().trim().max(100).optional().allow('', null),
+  sumagoUnit:          Joi.string().trim().max(100).optional().allow('', null),
+  sumagoPhase:         Joi.string().trim().max(100).optional().allow('', null),
+  sumagoSegment:       Joi.string().trim().max(100).optional().allow('', null),
   isSystemDefault:     Joi.forbidden(),
 })
 // At least one of courseNameId / nameOfCourseAsGroup must be present
@@ -33,6 +38,11 @@ const updateCourseSchema = Joi.object({
   status:              Joi.string().valid('ACTIVE', 'INACTIVE').optional(),
   educationId:         Joi.number().integer().positive().optional().allow(null),
   durationId:          Joi.number().integer().positive().optional().allow(null),
+  // Sumago taxonomy overrides — explicit null clears any saved override.
+  sumagoGroup:         Joi.string().trim().max(100).optional().allow('', null),
+  sumagoUnit:          Joi.string().trim().max(100).optional().allow('', null),
+  sumagoPhase:         Joi.string().trim().max(100).optional().allow('', null),
+  sumagoSegment:       Joi.string().trim().max(100).optional().allow('', null),
   isSystemDefault:     Joi.forbidden(),
 }).min(1); // at least one field must be provided
 

@@ -10,6 +10,7 @@ const { buildPayload, executeWebhookDelivery } = require('../enrollments/enrollm
 const { manualEnrollmentSchema } = require('./adminEnrollment.validator');
 const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.service');
 const { runCouponValidation } = require('../internalPlans/internalPlan.service');
+const { enqueueExternalApiSync } = require('../../queues/externalApi.queue');
 const auditService = require('../audit/audit.service');
 
 // ---------------------------------------------------------------------------
@@ -122,6 +123,32 @@ async function fireAdminWebhook({ enrollment, adminMeta }) {
     durationMs: deliveryResult?.durationMs ?? (Date.now() - startMs),
     ...(deliveryResult?.errorMessage ? { error: deliveryResult.errorMessage } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// triggerKommonSchoolSync
+//
+// Pushes an admin-created (INTERNAL) enrollment to the Kommon School Platform
+// Integration API. Mirrors the BullMQ → inline-fallback pattern used by the
+// public Razorpay flow at payment.service.js:315-339 so a Redis outage never
+// blocks the admin response. paymentId may be null for admin flows where no
+// Payment row is created (100% discount → FULLY_DISCOUNTED).
+// ---------------------------------------------------------------------------
+async function triggerKommonSchoolSync({ enrollmentId, paymentId, traceId }) {
+  try {
+    await enqueueExternalApiSync({ enrollmentId, paymentId, traceId });
+  } catch (queueErr) {
+    logger.warn({
+      msg: 'external_api_enqueue_failed_using_inline_fallback',
+      traceId,
+      enrollment_id: enrollmentId,
+      payment_id: paymentId,
+      error: queueErr.message,
+    });
+    const { syncEnrollmentInBackground } = require('../externalApi/external.service');
+    // Intentionally not awaited — admin response must not wait for external HTTP.
+    syncEnrollmentInBackground({ enrollmentId, paymentId, traceId });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -270,10 +297,14 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
       },
     });
 
-    // 5. Transition directly to 'paid' (skipping payment_pending + sync_pending)
+    // 5. Transition directly to 'paid' (skipping payment_pending + sync_pending).
+    //    external_sync_status='PENDING' marks the row as queued for upstream push
+    //    to Kommon School — same initial state the Razorpay flow sets inside
+    //    settlePayment(). The worker / inline fallback flips this to SUCCESS,
+    //    FAILED, or DEAD_LETTER after the POST resolves.
     enrollment = await tx.enrollment.update({
       where: { id: created.id },
-      data: { status: 'paid' },
+      data: { status: 'paid', external_sync_status: 'PENDING' },
       include: {
         plan_pricing: {
           include: { plan: true },
@@ -307,6 +338,15 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
   };
 
   const webhookDelivery = await fireAdminWebhook({ enrollment, adminMeta });
+
+  // Push the admin-created enrollment to Kommon School. No Payment row exists
+  // for the legacy manual path, so paymentId is null — buildRequestBody in
+  // external.service.js synthesises ADMIN_<enrollment_code> as transactionId.
+  await triggerKommonSchoolSync({
+    enrollmentId: enrollment.id,
+    paymentId: null,
+    traceId,
+  });
 
   return {
     enrollment: {
@@ -527,6 +567,18 @@ async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL',
         internal_payment_status: internalPaymentStatus,
         // Lifecycle: admin record is settled at creation
         status: 'paid',
+        // Queue for upstream push to Kommon School — same initial state the
+        // Razorpay flow sets inside settlePayment(). Flipped to SUCCESS /
+        // FAILED / DEAD_LETTER by the worker after the POST resolves.
+        external_sync_status: 'PENDING',
+      },
+      include: {
+        // Include internal_plan + course so the webhook builder
+        // (buildPayload in enrollmentWebhook.service.js) can pull the
+        // per-entity Sumago overrides (sumagoPlanCode / sumagoGroup /
+        // sumagoUnit / sumagoPhase / sumagoSegment) from the freshly-
+        // created row instead of falling back to env-only defaults.
+        internal_plan: { include: { course: true } },
       },
     });
 
@@ -602,6 +654,16 @@ async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL',
     ...(data.notes ? { notes: data.notes } : {}),
   };
   const webhookDelivery = await fireAdminWebhook({ enrollment, adminMeta });
+
+  // Push the admin-created internal enrollment to Kommon School. paymentId
+  // is null when finalAmountPaise=0 (FULLY_DISCOUNTED — no Payment row was
+  // created) — buildRequestBody falls back to ADMIN_<enrollment_code> as
+  // transactionId in that case.
+  await triggerKommonSchoolSync({
+    enrollmentId: enrollment.id,
+    paymentId: createdPaymentId,
+    traceId,
+  });
 
   return {
     enrollment: {

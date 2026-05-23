@@ -51,6 +51,18 @@ async function findActiveLogForEnrollment(enrollmentId) {
 }
 
 /**
+ * Find the most recent log row for an enrollment regardless of status.
+ * Used by the admin Retry-Sync endpoint to re-promote a dead-lettered or
+ * terminally-failed log row back to `retrying` state.
+ */
+async function findLatestLogForEnrollment(enrollmentId) {
+  return getDb().externalApiLog.findFirst({
+    where:   { enrollment_id: enrollmentId },
+    orderBy: { created_at: 'desc' },
+  });
+}
+
+/**
  * Transition a log row to `retrying`. Increments attempts counter.
  *
  * @param {string}   id
@@ -202,6 +214,7 @@ module.exports = {
   createLog,
   updateLog,
   findActiveLogForEnrollment,
+  findLatestLogForEnrollment,
   markRetrying,
   markSuccess,
   markFailed,

@@ -9,6 +9,7 @@ const {
   listDeliveryQuerySchema,
   deliveryIdParamSchema,
   sendTestSchema,
+  sumagoUsersListQuerySchema,
 } = require('./webhook.validator');
 const { PERMISSIONS } = require('../../config/constants');
 
@@ -57,10 +58,13 @@ router.get(
   controller.sumagoConfig,
 );
 
-// GET /api/v1/webhooks/sumago/users — proxy to Sumago GET /integrations/get-users
+// GET /api/v1/webhooks/sumago/users — sync-then-list from local mirror.
+// Server-side paginated: page, limit, search, onboardingStatus, candidateType,
+// sortBy, sortOrder. See sumagoUsersListQuerySchema for shape.
 router.get(
   '/sumago/users',
   hasPermission(PERMISSIONS.WEBHOOKS_VIEW),
+  validate(sumagoUsersListQuerySchema, 'query'),
   controller.sumagoUsers,
 );
 

@@ -88,42 +88,77 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     razorpayPaymentId ||
     `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // Sumago expects fixed taxonomy values per organization (case-sensitive).
-  // These come from env (SUMAGO_GROUP / SUMAGO_UNIT / SUMAGO_PHASE) — NOT
-  // derived from CourseMaster — because Sumago's allowlist is org-wide, not
-  // per-course. amountRupees still uses courseFee when available so the value
-  // sent matches the actual course price.
-  const group = process.env.SUMAGO_GROUP || 'Engineering - UG';
-  const unit  = process.env.SUMAGO_UNIT  || 'B.Tech CSE';
-  const phase = process.env.SUMAGO_PHASE || 'Semester 1';
+  // Sumago taxonomy — three-tier resolution per field:
+  //   1. Per-entity override if present (InternalPlan.sumagoPlanCode for
+  //      `plan`; CourseMaster.sumagoGroup/Unit/Phase/Segment for the
+  //      taxonomy quartet). These columns are admin-editable and let
+  //      different plans / courses map to different Sumago entries.
+  //   2. Env-var default (SUMAGO_PLAN_CODE / SUMAGO_GROUP / ...). Useful
+  //      as the "house style" fallback so every plan/course doesn't need
+  //      its overrides set explicitly.
+  //   3. Hardcoded sane defaults so the payload is never null even when
+  //      neither override nor env is set.
+  //
+  // Override sources:
+  //   - enrollment.internal_plan        → admin-internal flow (when the
+  //                                       caller includes the relation).
+  //   - course                          → public-website flow (already
+  //                                       fetched via promo-code lookup
+  //                                       in the caller).
+  //   - enrollment.internal_plan.course → admin-internal flow with course
+  //                                       relation included.
+  const internalPlan = enrollment?.internal_plan ?? null;
+  const courseFromInternal = internalPlan?.course ?? null;
+  const effectiveCourse = course ?? courseFromInternal;
+
+  const planCode =
+    internalPlan?.sumagoPlanCode
+    || process.env.SUMAGO_PLAN_CODE
+    || 'SUMAGOTEST_30';
+
+  const group =
+    effectiveCourse?.sumagoGroup
+    || process.env.SUMAGO_GROUP
+    || 'Full Stack Development Using Python';
+  const unit =
+    effectiveCourse?.sumagoUnit
+    || process.env.SUMAGO_UNIT
+    || '30 Days';
+  const phase =
+    effectiveCourse?.sumagoPhase
+    || process.env.SUMAGO_PHASE
+    || '';
+  const segment =
+    effectiveCourse?.sumagoSegment
+    || process.env.SUMAGO_SEGMENT
+    || '';
 
   let amountRupees;
-  if (course && course.courseFee != null) {
-    // courseFee is a Prisma Decimal stored as rupees — coerce to integer rupees.
-    // Math.round handles both string "49999.00" and numeric representations.
-    amountRupees = Math.round(Number(course.courseFee));
+  // Prefer the enrollment's snapshot final amount (admin-internal flow
+  // populates this with the final, post-discount, post-coupon amount).
+  if (enrollment?.final_amount_paise != null) {
+    amountRupees = Math.round(Number(enrollment.final_amount_paise) / 100);
+  } else if (effectiveCourse && effectiveCourse.courseFee != null) {
+    // Public-website flow — use the matched CourseMaster's fee.
+    amountRupees = Math.round(Number(effectiveCourse.courseFee));
   } else {
-    // No matched course → convert order amount (paise) to rupees.
+    // No matched course / snapshot → fall back to the order amount.
     amountRupees = Math.round((amount ?? 0) / 100);
   }
 
   // Webhook payload — exactly 11 keys, nothing else. Downstream consumers
   // depend on this exact shape; do not add new top-level keys without
   // coordinating with them.
-  //
-  // plan / group / unit / phase / segment are all read from env so they can
-  // be re-tuned per-organization without a code edit. Case-sensitive — Sumago
-  // matches the exact strings against their allowlist.
   return {
     firstName,
     lastName,
     email:         enrollment?.email ?? '',
     phoneNumber,
-    plan:          process.env.SUMAGO_PLAN_CODE || 'NOVA2025_30',
+    plan:          planCode,
     group,
     unit,
     phase,
-    segment:       process.env.SUMAGO_SEGMENT || 'A',
+    segment,
     transactionId,
     amount:        amountRupees,
   };

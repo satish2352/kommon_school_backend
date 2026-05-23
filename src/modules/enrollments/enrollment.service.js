@@ -389,7 +389,29 @@ async function listEnrollments(query, traceId) {
 
   const where = { deleted_at: null };
 
-  if (query.status) where.status = query.status;
+  // Status filter. The validator restricts to a known set, but we also
+  // ignore empty strings here so a "All statuses" select that emits "" can
+  // be passed through verbatim by the frontend.
+  if (query.status) {
+    const s = String(query.status);
+    // The validator accepts both payment-lifecycle and SYNC_* values in the
+    // single `status` field for backwards compat; SYNC_* values are mapped
+    // to the dedicated column instead so we don't ever assign them to
+    // enrollments.status (where they'd match zero rows).
+    if (s.startsWith('SYNC_')) {
+      where.external_sync_status = s.replace(/^SYNC_/, '');
+    } else if (['PAID', 'PARTIAL', 'PENDING', 'FULLY_DISCOUNTED'].includes(s)) {
+      where.internal_payment_status = s;
+    } else {
+      where.status = s;
+    }
+  }
+
+  // Dedicated external-sync filter. Overrides the SYNC_* mapping above if
+  // both are sent (admin filter row + global search both contributing).
+  if (query.externalSyncStatus) {
+    where.external_sync_status = String(query.externalSyncStatus);
+  }
 
   // Server-side candidate-type filter. Accept INTERNAL / EXTERNAL (case-
   // insensitive on the wire). Frontend sends `candidateType` AND the legacy
@@ -414,13 +436,22 @@ async function listEnrollments(query, traceId) {
 
   if (query.search) {
     const term = query.search.trim();
-    where.OR = [
-      { email:        { contains: term, mode: 'insensitive' } },
-      { first_name:   { contains: term, mode: 'insensitive' } },
-      { last_name:    { contains: term, mode: 'insensitive' } },
-      { name:         { contains: term, mode: 'insensitive' } },
-      { phone_number: { contains: term } },
-    ];
+    // Trigram GIN indexes (enrollments_*_trgm_idx) need ≥3 chars to be
+    // effective — shorter patterns degenerate to a sequential scan because
+    // PostgreSQL cannot extract a trigram. Silently drop sub-3-char text
+    // searches; numeric prefixes (phone-number lookups) are allowed at any
+    // length because they use the btree index on phone_number.
+    const isNumeric = /^\+?\d+$/.test(term);
+    if (isNumeric) {
+      where.phone_number = { startsWith: term.replace(/^\+/, '') };
+    } else if (term.length >= 3) {
+      where.OR = [
+        { email:        { contains: term, mode: 'insensitive' } },
+        { first_name:   { contains: term, mode: 'insensitive' } },
+        { last_name:    { contains: term, mode: 'insensitive' } },
+        { name:         { contains: term, mode: 'insensitive' } },
+      ];
+    }
   }
   // (dateFrom / dateTo handling moved up next to candidate_type filter so the
   // `fromDate` / `toDate` aliases from the frontend Enrollments page are honoured.)

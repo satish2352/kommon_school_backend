@@ -15,6 +15,24 @@ const listDeliveryQuerySchema = Joi.object({
 });
 
 // ---------------------------------------------------------------------------
+// Sumago users list — server-side pagination, search, filter, sort.
+// max(limit) = 200 matches the hard cap in sumagoUserSync.service.js.
+// ---------------------------------------------------------------------------
+
+const sumagoUsersListQuerySchema = Joi.object({
+  page:             Joi.number().integer().min(1).default(1),
+  limit:            Joi.number().integer().min(1).max(200).default(25),
+  search:           Joi.string().trim().max(255).allow('').optional(),
+  onboardingStatus: Joi.string().trim().max(50).allow('').optional(),
+  candidateType:    Joi.string().valid('INTERNAL', 'EXTERNAL', 'UNKNOWN').optional(),
+  sortBy:           Joi.string().valid('last_synced_at', 'first_seen_at', 'email', 'id').default('last_synced_at'),
+  sortOrder:        Joi.string().valid('asc', 'desc').default('desc'),
+  // sync=force opts into a fresh upstream sync regardless of page/filter.
+  // Used by the Refresh button on the admin UI. Any other value is a no-op.
+  sync:             Joi.string().valid('force').optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Route-param schema: /:id (integer PK)
 // ---------------------------------------------------------------------------
 
@@ -60,4 +78,9 @@ const sendTestSchema = Joi.object({
   planSelection: planSelectionSchema,
 }).options({ allowUnknown: false });
 
-module.exports = { listDeliveryQuerySchema, deliveryIdParamSchema, sendTestSchema };
+module.exports = {
+  listDeliveryQuerySchema,
+  deliveryIdParamSchema,
+  sendTestSchema,
+  sumagoUsersListQuerySchema,
+};

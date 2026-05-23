@@ -45,6 +45,10 @@ const createInternalPlanSchema = Joi.object({
   courseId:    Joi.number().integer().positive().required(),
   status:      Joi.string().valid('ACTIVE', 'INACTIVE').default('ACTIVE'),
   coupons:     Joi.array().items(couponSchema).default([]),
+  // Optional Sumago plan-code override. Must be a string registered on
+  // Sumago's allowlist for the organization. When set, this is used in
+  // place of SUMAGO_PLAN_CODE for any enrollment bound to this plan.
+  sumagoPlanCode: Joi.string().trim().max(100).optional().allow('', null),
   // refId is server-generated — forbid it in create body
   refId:       Joi.forbidden(),
 });
@@ -59,6 +63,8 @@ const updateInternalPlanSchema = Joi.object({
   courseId:    Joi.number().integer().positive().optional(),
   status:      Joi.string().valid('ACTIVE', 'INACTIVE').optional(),
   coupons:     Joi.array().items(couponSchema).optional(),
+  // Optional Sumago plan-code override (see create schema for semantics).
+  sumagoPlanCode: Joi.string().trim().max(100).optional().allow('', null),
   // refId is immutable — reject if it appears in the body
   refId:       Joi.forbidden(),
 }).min(1);

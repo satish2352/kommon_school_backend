@@ -22,4 +22,10 @@ router.get('/', validate(listEnrollmentsQuerySchema, 'query'), controller.list);
 // the :id pattern.
 router.get('/:id', controller.getById);
 
+// POST /api/v1/admin/enrollments/:id/retry-sync — re-queue the external-API
+// sync job for an enrollment whose external_sync_status is FAILED or
+// DEAD_LETTER. Standard SaaS recovery action — admin clicks "Retry sync"
+// after the root cause (dead webhook URL, expired token, etc.) is fixed.
+router.post('/:id/retry-sync', controller.retrySync);
+
 module.exports = router;

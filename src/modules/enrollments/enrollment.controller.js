@@ -116,6 +116,12 @@ const verifyPaymentForEnrollment = asyncHandler(async (req, res) => {
     include: {
       payments: { orderBy: { created_at: 'desc' }, take: 1 },
       plan_pricing: { include: { plan: true } },
+      // Pull internal_plan + its course so buildPayload can use the
+      // per-entity Sumago overrides (sumagoPlanCode / sumagoGroup / etc.)
+      // when this is an admin-internal enrollment that paid via Razorpay.
+      // For public-website enrollments these are null and buildPayload
+      // falls through to env defaults — backward compatible.
+      internal_plan: { include: { course: true } },
     },
   });
   if (!enrollment) {

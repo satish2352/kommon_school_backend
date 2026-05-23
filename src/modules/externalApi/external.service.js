@@ -10,8 +10,39 @@ const logger = require('../../config/logger');
 const { EXTERNAL_API_DEFAULTS, DEFAULT_PHONE_COUNTRY_CODE } = require('../../config/constants');
 
 const EXTERNAL_API_URL = process.env.EXTERNAL_API_URL;
-const EXTERNAL_API_TOKEN = process.env.EXTERNAL_API_TOKEN;
 const EXTERNAL_API_TIMEOUT_MS = Number(process.env.EXTERNAL_API_TIMEOUT_MS) || 15000;
+
+/**
+ * Resolve the effective Bearer token for outgoing sync requests.
+ *
+ * Priority:
+ *   1. EXTERNAL_API_TOKEN  — explicit token specific to the external-API
+ *      pipeline. Treated as unset when it's empty OR still holds the
+ *      .env placeholder string ("REPLACE_ME_..."). Without this guard,
+ *      first-run installs were literally sending the placeholder to
+ *      Sumago as a Bearer token and getting 401-rejected.
+ *   2. SUMAGO_API_TOKEN    — the token used by the Sumago Platform
+ *      Integration API. Already configured for the GET /get-users
+ *      proxy, so reusing it lets the POST /provision-user path
+ *      authenticate without a second env var.
+ *   3. null                — no token available. callExternalApi
+ *      omits the Authorization header entirely (rather than sending
+ *      "Bearer undefined" which is worse than sending nothing).
+ *
+ * Re-read on every call (instead of caching at module load) so an
+ * operator rotating tokens via .env + restart sees the new value
+ * without code changes.
+ */
+function getEffectiveAuthToken() {
+  const raw = (process.env.EXTERNAL_API_TOKEN || '').trim();
+  const isPlaceholder = !raw || /^REPLACE_ME/i.test(raw);
+  if (!isPlaceholder) return { token: raw, source: 'EXTERNAL_API_TOKEN' };
+
+  const sumago = (process.env.SUMAGO_API_TOKEN || '').trim();
+  if (sumago) return { token: sumago, source: 'SUMAGO_API_TOKEN' };
+
+  return { token: null, source: 'none' };
+}
 
 /**
  * Mask an email address for safe logging: j***@example.com
@@ -45,13 +76,33 @@ function maskPhone(phone) {
  * @returns {Promise<import('axios').AxiosResponse>}
  */
 async function callExternalApi({ endpoint, body, enrollmentId }) {
+  // Build headers conditionally. Sending "Authorization: Bearer undefined"
+  // (or with a placeholder) is strictly worse than sending nothing —
+  // some upstream APIs reject malformed Bearer values with 401 even when
+  // they would have accepted an unauthenticated request, and the
+  // misleading 401 made past debugging painful.
+  const headers = {
+    'Content-Type':      'application/json',
+    'X-Idempotency-Key': enrollmentId,
+  };
+  const { token, source } = getEffectiveAuthToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  // Per-call debug line for ops — never logs the token value, only the
+  // resolution source so a 401 can be traced back to which env var was
+  // (or wasn't) honoured.
+  logger.debug({
+    msg: 'external_api_call',
+    endpoint,
+    auth_source: source,
+    enrollment_id: enrollmentId,
+  });
+
   return axios.post(endpoint, body, {
     timeout: EXTERNAL_API_TIMEOUT_MS,
-    headers: {
-      'Authorization': `Bearer ${EXTERNAL_API_TOKEN}`,
-      'Content-Type': 'application/json',
-      'X-Idempotency-Key': enrollmentId,
-    },
+    headers,
     validateStatus: null, // handle all HTTP status codes ourselves
   });
 }
@@ -112,6 +163,23 @@ function buildRequestBody(enrollment, payment) {
   const { first, last } = deriveFirstLast(enrollment);
   const txnFromPayment = payment && payment.razorpay_payment_id;
 
+  // transactionId resolution (in order):
+  //   1. Real Razorpay payment id — the public flow always has one.
+  //   2. Synthetic ADMIN_<enrollment_code> — admin-created INTERNAL flows.
+  //      Both createManualEnrollment (no Payment row) and
+  //      createInternalEnrollment (Payment row with razorpay_payment_id=null)
+  //      land here. Kommon School treats this as a unique txn ID per record.
+  //   3. Final fallback to the env-defined dummy — keeps the contract intact
+  //      for any legacy code path that lacks both a payment and an enrollment_code.
+  let transactionId;
+  if (txnFromPayment) {
+    transactionId = txnFromPayment;
+  } else if (enrollment.candidate_type === 'INTERNAL' && enrollment.enrollment_code) {
+    transactionId = `ADMIN_${enrollment.enrollment_code}`;
+  } else {
+    transactionId = `${EXTERNAL_API_DEFAULTS.transactionId}_${enrollment.id.slice(0, 8)}`;
+  }
+
   return {
     firstName:     first                                    || EXTERNAL_API_DEFAULTS.firstName,
     lastName:      last                                     || EXTERNAL_API_DEFAULTS.lastName,
@@ -122,7 +190,7 @@ function buildRequestBody(enrollment, payment) {
     unit:          enrollment.unit                          || EXTERNAL_API_DEFAULTS.unit,
     phase:         enrollment.phase                         || EXTERNAL_API_DEFAULTS.phase,
     segment:       enrollment.segment                       || EXTERNAL_API_DEFAULTS.segment,
-    transactionId: txnFromPayment                           || `${EXTERNAL_API_DEFAULTS.transactionId}_${enrollment.id.slice(0, 8)}`,
+    transactionId,
     amount:        (enrollment.amount != null ? enrollment.amount : EXTERNAL_API_DEFAULTS.amount),
   };
 }
@@ -229,13 +297,19 @@ async function syncEnrollment({ enrollment, payment, traceId }) {
 
     if (classification.terminal) {
       await repo.markFailed(log.id, null, null, durationMs, err.message);
+      // Terminal classification → no auto-retry; same operational meaning as
+      // dead-letter (needs admin Retry-Sync). Flag the enrollment so the
+      // admin UI shows the actionable badge.
+      await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'DEAD_LETTER');
       return; // do not rethrow; BullMQ will not retry
     }
 
     if (classification.reason === 'ALREADY_SYNCED') {
       // 409 from remote means enrollment is already in the system — treat as success
       await repo.markSuccess(log.id, null, 409, durationMs);
-      await enrollmentRepo.updateEnrollmentStatus(enrollment.id, 'completed');
+      // Sync succeeded — flip external_sync_status, leave `status='paid'`
+      // alone so the customer-facing payment lifecycle stays clean.
+      await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'SUCCESS');
       logger.info({ msg: 'external_api_already_synced', traceId, enrollment_id: enrollment.id });
       return;
     }
@@ -243,6 +317,10 @@ async function syncEnrollment({ enrollment, payment, traceId }) {
     // Non-terminal error — mark retrying and rethrow so BullMQ schedules retry
     const nextAttemptAt = new Date(Date.now() + (classification.retryAfterMs || 30000));
     await repo.markRetrying(log.id, nextAttemptAt, err.message);
+    // Surface the transient failure on the enrollment so admins know a
+    // retry is in-flight. The dead-letter handler (in externalApi.worker)
+    // upgrades this to DEAD_LETTER once attempts are exhausted.
+    await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'FAILED');
 
     throw err; // BullMQ will pick this up and retry per job options
   }
@@ -253,7 +331,11 @@ async function syncEnrollment({ enrollment, payment, traceId }) {
 
   if (statusCode >= 200 && statusCode < 300) {
     await repo.markSuccess(log.id, response.data || null, statusCode, durationMs);
-    await enrollmentRepo.updateEnrollmentStatus(enrollment.id, 'completed');
+    // Sync succeeded — flip external_sync_status to SUCCESS, leave
+    // `status='paid'` alone. (Old code path used to bounce status to
+    // 'completed' which conflated payment lifecycle with sync state
+    // and broke the SaaS-grade separation introduced in this refactor.)
+    await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'SUCCESS');
 
     logger.info({
       msg: 'external_api_sync_success',
@@ -287,17 +369,21 @@ async function syncEnrollment({ enrollment, payment, traceId }) {
 
   if (classification.terminal) {
     await repo.markFailed(log.id, response.data || null, statusCode, durationMs, httpErr.message);
+    await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'DEAD_LETTER');
     return;
   }
 
   if (classification.reason === 'ALREADY_SYNCED') {
     await repo.markSuccess(log.id, response.data || null, statusCode, durationMs);
-    await enrollmentRepo.updateEnrollmentStatus(enrollment.id, 'completed');
+    // 409 ALREADY_SYNCED is semantically the same as a fresh 2xx —
+    // mark as success on the sync state but never touch `status`.
+    await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'SUCCESS');
     return;
   }
 
   const nextAttemptAt = new Date(Date.now() + (classification.retryAfterMs || 30000));
   await repo.markRetrying(log.id, nextAttemptAt, httpErr.message);
+  await enrollmentRepo.updateExternalSyncStatus(enrollment.id, 'FAILED');
   throw httpErr; // trigger BullMQ retry
 }
 

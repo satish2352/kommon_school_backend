@@ -305,11 +305,13 @@ async function verifyPayment(body, traceId) {
     });
 
     if (!result.alreadySettled) {
-      // Transition enrollment to sync_pending before enqueuing so the queue
-      // worker always sees a consistent status even if it picks up the job
-      // before the HTTP response returns to the client.
-      await enrollmentRepo.updateEnrollmentStatus(payment.enrollment_id, 'sync_pending');
-
+      // settlePayment() already set enrollment.status='paid' AND
+      // external_sync_status='PENDING' inside the verify transaction, so
+      // there's nothing more to mutate before enqueuing — the worker
+      // sees a consistent paid+pending row from the start. (Older code
+      // here flipped status to 'sync_pending' which conflated payment
+      // lifecycle with sync state and is the root cause of the bug
+      // where dead-lettered rows were appearing as `failed` to admins.)
       try {
         await enqueueExternalApiSync({
           enrollmentId: payment.enrollment_id,

@@ -183,6 +183,9 @@ async function createInternalPlan(body, traceId) {
     courseId:    Number(body.courseId),
     status:      body.status || 'ACTIVE',
     coupons:     normaliseCoupons(body.coupons),
+    // Optional Sumago plan-code override; empty string normalised to null
+    // so a blank input doesn't store "" and pass the truthy override check.
+    sumagoPlanCode: body.sumagoPlanCode?.trim() || null,
   };
 
   const plan = await repo.createInternalPlan(data);
@@ -219,6 +222,11 @@ async function updateInternalPlan(id, body, traceId) {
   if (body.description !== undefined) data.description = body.description?.trim() ?? null;
   if (body.courseId    !== undefined) data.courseId    = Number(body.courseId);
   if (body.status      !== undefined) data.status      = body.status;
+  if (body.sumagoPlanCode !== undefined) {
+    // Treat empty string as "clear the override" → null, so a blank input
+    // doesn't pass the truthy check in buildPayload.
+    data.sumagoPlanCode = body.sumagoPlanCode?.trim() || null;
+  }
 
   if (Array.isArray(body.coupons)) {
     // Build a code → usedCount map from the existing plan so we can
