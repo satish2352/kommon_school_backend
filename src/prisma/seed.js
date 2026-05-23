@@ -370,7 +370,17 @@ async function seedCourses() {
       updated++;
     } else {
       await prisma.courseMaster.create({
-        data: { nameOfCourseAsGroup, ...data, isSystemDefault: false },
+        data: {
+          nameOfCourseAsGroup,
+          ...data,
+          isSystemDefault: false,
+          courseName: {
+            connectOrCreate: {
+              where:  { name: nameOfCourseAsGroup },
+              create: { name: nameOfCourseAsGroup, status: 'ACTIVE' },
+            },
+          },
+        },
       });
       created++;
     }
@@ -406,6 +416,12 @@ async function seedCourses() {
         educationId:         eduGeneral?.id ?? null,
         durationId:          dur6Months?.id ?? null,
         isSystemDefault:     true,
+        courseName: {
+          connectOrCreate: {
+            where:  { name: 'GENERAL' },
+            create: { name: 'GENERAL', status: 'ACTIVE', isSystemDefault: true },
+          },
+        },
       },
     });
     created++;
