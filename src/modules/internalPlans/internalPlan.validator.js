@@ -2,6 +2,21 @@
 
 const Joi = require('joi');
 
+// External integration Plan ID format: 1–100 chars, ASCII letters/digits/_/-.
+// Matches SKU-style codes like SUMAGOTEST_SCOPE_30DAYS. Required on every
+// write; uniqueness enforced at the DB level via partial unique index.
+const EXTERNAL_PLAN_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const externalPlanIdSchema = Joi.string()
+  .trim()
+  .min(1)
+  .max(100)
+  .pattern(EXTERNAL_PLAN_ID_PATTERN)
+  .messages({
+    'string.pattern.base': 'Plan ID may contain only letters, digits, underscores, and hyphens',
+    'string.empty':        'Plan ID is required',
+    'any.required':        'Plan ID is required',
+  });
+
 // ---------------------------------------------------------------------------
 // Coupon sub-schema (used inside create/update body)
 //
@@ -49,6 +64,9 @@ const createInternalPlanSchema = Joi.object({
   // Sumago's allowlist for the organization. When set, this is used in
   // place of SUMAGO_PLAN_CODE for any enrollment bound to this plan.
   sumagoPlanCode: Joi.string().trim().max(100).optional().allow('', null),
+  // Required: external integration Plan ID. Sent as `planId` in the
+  // Sumago provision-user webhook. Globally unique.
+  externalPlanId: externalPlanIdSchema.required(),
   // refId is server-generated — forbid it in create body
   refId:       Joi.forbidden(),
 });
@@ -65,6 +83,11 @@ const updateInternalPlanSchema = Joi.object({
   coupons:     Joi.array().items(couponSchema).optional(),
   // Optional Sumago plan-code override (see create schema for semantics).
   sumagoPlanCode: Joi.string().trim().max(100).optional().allow('', null),
+  // Required: external integration Plan ID (same semantics as create).
+  // On PATCH, if the caller sends this field it must be valid; we accept
+  // it as required so PATCHing a row without it is allowed (admin updating
+  // only e.g. status), but if present it must satisfy the constraints.
+  externalPlanId: externalPlanIdSchema.optional(),
   // refId is immutable — reject if it appears in the body
   refId:       Joi.forbidden(),
 }).min(1);

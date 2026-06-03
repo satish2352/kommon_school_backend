@@ -180,12 +180,21 @@ function buildRequestBody(enrollment, payment) {
     transactionId = `${EXTERNAL_API_DEFAULTS.transactionId}_${enrollment.id.slice(0, 8)}`;
   }
 
+  // planId — per-(plan, duration) identifier stored on plan_pricing.external_plan_id.
+  // Independent of `plan` (env-default `SUMAGO_PLAN_CODE`) which stays untouched.
+  // The relation is loaded by both syncEnrollmentInBackground and the BullMQ
+  // worker; if it ever arrives unloaded (e.g. a legacy caller), we send null
+  // rather than fabricating a value — the receiving system can decide.
+  const externalPlanId =
+    (enrollment.plan_pricing && enrollment.plan_pricing.externalPlanId) || null;
+
   return {
     firstName:     first                                    || EXTERNAL_API_DEFAULTS.firstName,
     lastName:      last                                     || EXTERNAL_API_DEFAULTS.lastName,
     email:         enrollment.email                         || EXTERNAL_API_DEFAULTS.email,
     phoneNumber:   normalisePhone(enrollment.phone_number)  || EXTERNAL_API_DEFAULTS.phoneNumber,
     plan:          enrollment.plan                          || EXTERNAL_API_DEFAULTS.plan,
+    planId:        externalPlanId,
     group:         enrollment.group                         || EXTERNAL_API_DEFAULTS.group,
     unit:          enrollment.unit                          || EXTERNAL_API_DEFAULTS.unit,
     phase:         enrollment.phase                         || EXTERNAL_API_DEFAULTS.phase,
@@ -207,6 +216,8 @@ async function syncEnrollmentInBackground({ enrollmentId, paymentId, traceId }) 
     const db = getPrismaClient();
     const enrollment = await db.enrollment.findFirst({
       where: { id: enrollmentId, deleted_at: null },
+      // Include plan_pricing so buildRequestBody can read externalPlanId.
+      include: { plan_pricing: { select: { externalPlanId: true } } },
     });
     if (!enrollment) {
       logger.warn({ msg: 'external_api_inline_skip_no_enrollment', traceId, enrollment_id: enrollmentId });

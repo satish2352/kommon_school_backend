@@ -533,6 +533,11 @@ model PlanPricing {
   discountPercent Decimal    @default(0) @map("discount_percent") @db.Decimal(5,2)
   finalPrice      Decimal    @map("final_price") @db.Decimal(10,2)
   discountLabel   String?    @map("discount_label") @db.VarChar(100)
+  // External integration Plan ID. Sent as `planId` in the Sumago provision-user
+  // webhook payload. Required on every API write (Joi-validated) but DB column
+  // stays nullable so existing pre-feature rows do not block the migration —
+  // admin backfills via the UI before payments fire.
+  externalPlanId  String?    @unique @map("external_plan_id") @db.VarChar(100)
   status          PlanStatus @default(ACTIVE)
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
@@ -555,6 +560,12 @@ model InternalPlan {
   // webhook. Falls back to SUMAGO_PLAN_CODE env var when null. Must
   // match a plan code registered on Sumago for the organization.
   sumagoPlanCode String?           @map("sumago_plan_code") @db.VarChar(100)
+
+  // External integration Plan ID. Sent as `planId` in the Sumago provision-user
+  // webhook payload (independent of the legacy `plan` field). Required on every
+  // API write (Joi-validated) but DB column stays nullable so existing
+  // pre-feature rows do not block the migration — admin backfills via the UI.
+  externalPlanId String?           @unique @map("external_plan_id") @db.VarChar(100)
 
   courseId    Int                  @map("course_id")
   course      CourseMaster         @relation(fields: [courseId], references: [id], onDelete: Restrict)

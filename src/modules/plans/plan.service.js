@@ -151,6 +151,17 @@ async function create(body, traceId) {
   const plan = await db.$transaction(async (tx) => {
     const created = await tx.plan.create({ data: planData });
     if (pricingRows.length > 0) {
+      // Pre-validate that no externalPlanId in this payload collides with itself
+      // (Joi only checks each row in isolation — duplicates in the same array
+      // would otherwise fail with a generic Prisma P2002 at insert time).
+      const seen = new Set();
+      for (const p of pricingRows) {
+        const id = String(p.externalPlanId).trim();
+        if (seen.has(id)) {
+          throw ApiError.conflict(`Duplicate Plan ID "${id}" within the same plan`, 'EXTERNAL_PLAN_ID_DUPLICATE');
+        }
+        seen.add(id);
+      }
       await tx.planPricing.createMany({
         data: pricingRows.map((p) => {
           const discount = p.discountPercent != null ? Number(p.discountPercent) : 0;
@@ -163,6 +174,7 @@ async function create(body, traceId) {
             discountPercent: discount,
             finalPrice:      computed,
             discountLabel:   p.discountLabel || null,
+            externalPlanId:  String(p.externalPlanId).trim(),
             status:          p.status || 'ACTIVE',
           };
         }),
@@ -276,12 +288,31 @@ async function upsertPricing(planId, durationMonths, body, traceId) {
   const base = Number(body.basePrice);
   const discount = body.discountPercent != null ? Number(body.discountPercent) : 0;
   const computed = Math.round(base * (1 - discount / 100) * 100) / 100;
+  const externalPlanId = String(body.externalPlanId).trim();
+
+  // Pre-flight collision check — Prisma P2002 has a generic shape; we want
+  // a clean 409 with the colliding pricing's identity for the admin UI.
+  const db = getPrismaClient();
+  const collision = await db.planPricing.findFirst({
+    where: {
+      externalPlanId,
+      NOT: { AND: [{ planId }, { durationMonths }] },
+    },
+    select: { id: true, planId: true, durationMonths: true },
+  });
+  if (collision) {
+    throw ApiError.conflict(
+      `Plan ID "${externalPlanId}" is already used by plan ${collision.planId} (${collision.durationMonths} months)`,
+      'EXTERNAL_PLAN_ID_TAKEN',
+    );
+  }
 
   const data = {
     basePrice:       base,
     discountPercent: discount,
     finalPrice:      computed,
     discountLabel:   body.discountLabel || null,
+    externalPlanId,
     status:          body.status || 'ACTIVE',
   };
 

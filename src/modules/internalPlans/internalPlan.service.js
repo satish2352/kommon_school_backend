@@ -175,6 +175,21 @@ async function getInternalPlanById(id, traceId) {
 async function createInternalPlan(body, traceId) {
   await assertCourseExists(Number(body.courseId), traceId);
 
+  const externalPlanId = String(body.externalPlanId).trim();
+  // Pre-flight collision check. Prisma's P2002 is generic; this returns
+  // a clean 409 with the colliding plan's identity for the admin UI.
+  const db = getPrismaClient();
+  const collision = await db.internalPlan.findFirst({
+    where:  { externalPlanId },
+    select: { id: true, name: true },
+  });
+  if (collision) {
+    throw ApiError.conflict(
+      `Plan ID "${externalPlanId}" is already used by internal plan "${collision.name}" (id ${collision.id})`,
+      'EXTERNAL_PLAN_ID_TAKEN',
+    );
+  }
+
   const data = {
     refId:       genRefId(),
     name:        body.name.trim(),
@@ -186,6 +201,7 @@ async function createInternalPlan(body, traceId) {
     // Optional Sumago plan-code override; empty string normalised to null
     // so a blank input doesn't store "" and pass the truthy override check.
     sumagoPlanCode: body.sumagoPlanCode?.trim() || null,
+    externalPlanId,
   };
 
   const plan = await repo.createInternalPlan(data);
@@ -226,6 +242,25 @@ async function updateInternalPlan(id, body, traceId) {
     // Treat empty string as "clear the override" → null, so a blank input
     // doesn't pass the truthy check in buildPayload.
     data.sumagoPlanCode = body.sumagoPlanCode?.trim() || null;
+  }
+  if (body.externalPlanId !== undefined) {
+    const externalPlanId = String(body.externalPlanId).trim();
+    // Cross-plan collision check that excludes this row.
+    const db = getPrismaClient();
+    const collision = await db.internalPlan.findFirst({
+      where: {
+        externalPlanId,
+        NOT: { id },
+      },
+      select: { id: true, name: true },
+    });
+    if (collision) {
+      throw ApiError.conflict(
+        `Plan ID "${externalPlanId}" is already used by internal plan "${collision.name}" (id ${collision.id})`,
+        'EXTERNAL_PLAN_ID_TAKEN',
+      );
+    }
+    data.externalPlanId = externalPlanId;
   }
 
   if (Array.isArray(body.coupons)) {

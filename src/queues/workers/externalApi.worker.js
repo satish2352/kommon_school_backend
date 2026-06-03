@@ -20,6 +20,8 @@ async function loadJobData(enrollmentId, paymentId) {
 
   const enrollment = await db.enrollment.findFirst({
     where: { id: enrollmentId, deleted_at: null },
+    // Include plan_pricing so buildRequestBody can read externalPlanId.
+    include: { plan_pricing: { select: { externalPlanId: true } } },
   });
 
   if (!enrollment) {

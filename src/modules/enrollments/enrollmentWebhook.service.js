@@ -111,13 +111,36 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
   const courseFromInternal = internalPlan?.course ?? null;
   const effectiveCourse = course ?? courseFromInternal;
 
+  // Per-plan external Plan ID — drives BOTH the new `planId` field AND the
+  // legacy `plan` field in the payload (admin requested unified behavior:
+  // plan === planId so downstream Sumago uses the dynamic, per-plan code).
+  //   - admin-internal flow → InternalPlan.externalPlanId
+  //   - public website flow → PlanPricing.externalPlanId (when the
+  //     plan_pricing relation is included by the caller)
+  // Falls back to null when neither is present; receiver decides what to do.
+  const planId =
+    internalPlan?.externalPlanId
+    || enrollment?.plan_pricing?.externalPlanId
+    || null;
+
+  // `plan` resolution — three-tier:
+  //   1. Per-plan externalPlanId (new dynamic source — what admin wants today)
+  //   2. Legacy per-plan sumagoPlanCode override (kept for backward compat)
+  //   3. Env default → hardcoded fallback
   const planCode =
-    internalPlan?.sumagoPlanCode
+    planId
+    || internalPlan?.sumagoPlanCode
     || process.env.SUMAGO_PLAN_CODE
     || 'SUMAGOTEST_30';
 
+  // `group` resolution — admin wants the selected Course's actual name
+  // ("Data Analytics Using Python", etc.) to flow through dynamically.
+  // Per-course sumagoGroup override stays as the highest-priority option so
+  // admins who explicitly mapped a course to a different Sumago entry still
+  // win, but the natural course name takes precedence over env defaults.
   const group =
     effectiveCourse?.sumagoGroup
+    || effectiveCourse?.nameOfCourseAsGroup
     || process.env.SUMAGO_GROUP
     || 'Full Stack Development Using Python';
   const unit =
@@ -146,15 +169,16 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     amountRupees = Math.round((amount ?? 0) / 100);
   }
 
-  // Webhook payload — exactly 11 keys, nothing else. Downstream consumers
-  // depend on this exact shape; do not add new top-level keys without
-  // coordinating with them.
+  // Webhook payload. The 11-key set below is the legacy contract; `planId`
+  // is the new per-plan external identifier added alongside it. Downstream
+  // consumers should be coordinated with before adding any further keys.
   return {
     firstName,
     lastName,
     email:         enrollment?.email ?? '',
     phoneNumber,
     plan:          planCode,
+    planId,
     group,
     unit,
     phase,
