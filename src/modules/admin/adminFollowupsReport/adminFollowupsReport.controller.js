@@ -19,6 +19,15 @@ const logger = require('../../../config/logger');
  */
 function toFollowupItem(r) {
   const enrollment = pickEnrollmentSummary(r.enrollment);
+  // Lead ownership resolves in this priority:
+  //   1. enrollment.assigned_to (canonical source - Phase 2 onwards)
+  //   2. followup.assigned_to   (legacy dead-letter path; pre-Phase 2 rows)
+  //   3. null
+  // The follow-up's own assignee field is preserved because some old
+  // dead-letter followups have it set but the underlying enrollment is
+  // still unassigned. Most rows after Phase 2 read from #1.
+  const ownerId      = r.enrollment?.assigned_to ?? r.assigned_to ?? null;
+  const ownerUser    = r.enrollment?.assignee   ?? r.assignee     ?? null;
   return {
     id:            r.id,
     enrollmentId:  enrollment ? enrollment.enrollmentId : (r.enrollment_id || null),
@@ -28,10 +37,9 @@ function toFollowupItem(r) {
     callAttempts:  r.call_attempts ?? 0,
     nextFollowUpAt: r.next_followup_date || null,
     lastContactAt:  r.last_contact_at   || r.updated_at  || null,
-    assignedTo:    r.assigned_to  || null,
-    // Eager-loaded employee for the Assignee column. Null when unassigned.
-    assignee:      r.assignee
-      ? { id: r.assignee.id, email: r.assignee.email, role: r.assignee.role }
+    assignedTo:    ownerId,
+    assignee:      ownerUser
+      ? { id: ownerUser.id, email: ownerUser.email, role: ownerUser.role }
       : null,
     reason:        r.reason       || null,
     createdAt:     r.created_at,
@@ -55,16 +63,18 @@ const listReport = asyncHandler(async (req, res) => {
   }
 
   // Lead-ownership filter — UUID or special keyword (me / unassigned).
+  // Filters on enrollment.assigned_to (the canonical source of lead
+  // ownership), NOT followup.assigned_to (legacy dead-letter column).
   // Validator restricts to one of these three shapes; empty string is a
   // no-op so the frontend can send a cleared dropdown value verbatim.
   if (req.query.assignedTo) {
     const v = String(req.query.assignedTo);
     if (v === 'me') {
-      if (req.user?.id) where.assigned_to = req.user.id;
+      if (req.user?.id) where.enrollment = { assigned_to: req.user.id };
     } else if (v === 'unassigned') {
-      where.assigned_to = null;
+      where.enrollment = { assigned_to: null };
     } else if (v !== '') {
-      where.assigned_to = v;
+      where.enrollment = { assigned_to: v };
     }
   }
 
