@@ -359,10 +359,31 @@ async function getEnrollmentById(id, traceId) {
 // listEnrollments
 // ---------------------------------------------------------------------------
 
-async function listEnrollments(query, traceId) {
+async function listEnrollments(query, traceId, requestingUserId = null) {
   const { page, limit, skip, sortBy, sortOrder, dateFrom, dateTo } = parsePagination(query);
 
   const where = { deleted_at: null };
+
+  // Lead-ownership filter (Employee Portal Phase 2).
+  //   "me"          → resolves to requestingUserId (employee-portal shortcut).
+  //                   When the controller doesn't pass a user id (anonymous
+  //                   contexts shouldn't reach this code path) we treat "me"
+  //                   as a no-op rather than matching nothing — safer default.
+  //   "unassigned"  → assigned_to IS NULL
+  //   <UUID>        → specific employee
+  //
+  // Filter is additive — combined with the rest of the WHERE clause.
+  if (query.assignedTo) {
+    const v = String(query.assignedTo);
+    if (v === 'me') {
+      if (requestingUserId) where.assigned_to = requestingUserId;
+    } else if (v === 'unassigned') {
+      where.assigned_to = null;
+    } else {
+      // Validator already enforced UUID shape if not one of the keywords.
+      where.assigned_to = v;
+    }
+  }
 
   // Status filter. The validator restricts to a known set, but we also
   // ignore empty strings here so a "All statuses" select that emits "" can

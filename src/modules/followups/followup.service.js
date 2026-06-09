@@ -70,7 +70,7 @@ async function autoCreateFromDeadLetter({ enrollmentId, reason, traceId }) {
  * @param {string} traceId
  * @returns {Promise<{ rows: object[], meta: object }>}
  */
-async function listFollowups(query, traceId) {
+async function listFollowups(query, traceId, requestingUserId = null) {
   const { page, limit, skip, sortOrder, dateFrom, dateTo } = parsePagination(query);
 
   // Validate sort field against followup-specific allowed fields.
@@ -82,8 +82,19 @@ async function listFollowups(query, traceId) {
     where.status = query.status;
   }
 
+  // Lead-ownership filter (Employee Portal Phase 2). Accepts:
+  //   "me"          → requestingUserId (employee portal shortcut)
+  //   "unassigned"  → assigned_to IS NULL
+  //   <UUID>        → specific employee
   if (query.assignedTo) {
-    where.assigned_to = query.assignedTo;
+    const v = String(query.assignedTo);
+    if (v === 'me') {
+      if (requestingUserId) where.assigned_to = requestingUserId;
+    } else if (v === 'unassigned') {
+      where.assigned_to = null;
+    } else {
+      where.assigned_to = v;
+    }
   }
 
   if (dateFrom || dateTo) {

@@ -10,7 +10,11 @@ const { HTTP } = require('../../config/constants');
  * List followups with pagination, search, filters.
  */
 const list = asyncHandler(async (req, res) => {
-  const { rows, meta } = await followupService.listFollowups(req.query, req.traceId);
+  const { rows, meta } = await followupService.listFollowups(
+    req.query,
+    req.traceId,
+    req.user?.id ?? null,
+  );
   sendSuccess(res, HTTP.OK, rows, undefined, meta);
 });
 

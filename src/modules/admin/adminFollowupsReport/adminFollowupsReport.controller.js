@@ -29,6 +29,10 @@ function toFollowupItem(r) {
     nextFollowUpAt: r.next_followup_date || null,
     lastContactAt:  r.last_contact_at   || r.updated_at  || null,
     assignedTo:    r.assigned_to  || null,
+    // Eager-loaded employee for the Assignee column. Null when unassigned.
+    assignee:      r.assignee
+      ? { id: r.assignee.id, email: r.assignee.email, role: r.assignee.role }
+      : null,
     reason:        r.reason       || null,
     createdAt:     r.created_at,
     updatedAt:     r.updated_at,
@@ -50,8 +54,18 @@ const listReport = asyncHandler(async (req, res) => {
     where.status = req.query.status.toLowerCase();
   }
 
+  // Lead-ownership filter — UUID or special keyword (me / unassigned).
+  // Validator restricts to one of these three shapes; empty string is a
+  // no-op so the frontend can send a cleared dropdown value verbatim.
   if (req.query.assignedTo) {
-    where.assigned_to = req.query.assignedTo;
+    const v = String(req.query.assignedTo);
+    if (v === 'me') {
+      if (req.user?.id) where.assigned_to = req.user.id;
+    } else if (v === 'unassigned') {
+      where.assigned_to = null;
+    } else if (v !== '') {
+      where.assigned_to = v;
+    }
   }
 
   if (dateFrom || dateTo) {

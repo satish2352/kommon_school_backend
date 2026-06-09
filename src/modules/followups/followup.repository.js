@@ -87,6 +87,12 @@ async function listFollowups({ skip, take, where, orderBy }) {
         enrollment: {
           select: ENROLLMENT_SELECT,
         },
+        // Eager-load the assignee (employee) so the admin Follow-ups page
+        // can render an Assignee column without per-row round-trips.
+        // Lightweight projection (id + email + role).
+        assignee: {
+          select: { id: true, email: true, role: true },
+        },
       },
     }),
     db.followup.count({ where }),

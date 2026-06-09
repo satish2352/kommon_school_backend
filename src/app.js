@@ -29,6 +29,9 @@ const reportsRoutes = require('./modules/reports/reports.routes');
 const adminDashboardRoutes = require('./modules/admin/dashboard/dashboard.routes');
 const adminEmailLogRoutes = require('./modules/admin/emailLogs/emailLog.routes');
 const adminEnrollmentRoutes = require('./modules/admin/adminEnrollments/adminEnrollment.routes');
+const adminEmployeeRoutes = require('./modules/admin/employees/employee.routes');
+const employeeLeadRoutes = require('./modules/employee/leads/employeeLead.routes');
+const employeeDashboardRoutes = require('./modules/employee/dashboard/employeeDashboard.routes');
 const adminPaymentRoutes = require('./modules/admin/adminPayments/adminPayment.routes');
 const adminFollowupsReportRoutes = require('./modules/admin/adminFollowupsReport/adminFollowupsReport.routes');
 const courseRoutes = require('./modules/courses/course.routes');
@@ -126,6 +129,17 @@ app.use('/api/v1/admin/email-logs', adminEmailLogRoutes);
 app.use('/api/v1/admin/enrollments', adminEnrollmentManualRoutes);
 // Admin enrollment list (existing Phase 3B module)
 app.use('/api/v1/admin/enrollments', adminEnrollmentRoutes);
+// Admin employees list — minimal projection for the assignment dropdown.
+// Sits alongside (not under) /admin/users so user-management CRUD is
+// untouched. Permission gate: LEADS_ASSIGN.
+app.use('/api/v1/admin/employees', adminEmployeeRoutes);
+// Employee Follow-Up Portal — read + act on leads assigned to the caller.
+// Permission gate: LEADS_VIEW_OWN. Per-row ownership enforced inside the
+// service so admins can hit the same endpoint for monitoring.
+app.use('/api/v1/employee/leads', employeeLeadRoutes);
+// Employee dashboard tiles + recent activity. Same gate; counts are
+// hard-bound to req.user.id server-side.
+app.use('/api/v1/employee/dashboard', employeeDashboardRoutes);
 app.use('/api/v1/admin/payments', adminPaymentRoutes);
 app.use('/api/v1/admin/follow-ups/report', adminFollowupsReportRoutes);
 // Frontend hits /follow-ups (hyphenated) for the admin Follow-ups page list view

@@ -23,7 +23,11 @@ const { mapEnrollmentStatus } = require('../../../utils/transformAdmin');
  * the frontend renders "—" for them.
  */
 const list = asyncHandler(async (req, res) => {
-  const { rows, meta } = await enrollmentService.listEnrollments(req.query, req.traceId);
+  const { rows, meta } = await enrollmentService.listEnrollments(
+    req.query,
+    req.traceId,
+    req.user?.id ?? null,
+  );
 
   // ─── Batch-fetch the latest external_api_log per enrollment ────────
   // The admin Enrollments page renders a per-row "why did sync fail?"
@@ -96,6 +100,14 @@ const list = asyncHandler(async (req, res) => {
       // Third-party sync state — separate from `status`. NULL on legacy
       // rows that pre-date the column; admin UI renders it as "—".
       externalSyncStatus:    r.external_sync_status     ?? null,
+      // Lead-ownership snapshot for the Assignee column. assignedTo is
+      // the raw FK (null when unassigned); assignee is the eager-loaded
+      // user object so the table cell can render the email without an
+      // extra round-trip per row.
+      assignedTo:            r.assigned_to              ?? null,
+      assignee:              r.assignee
+        ? { id: r.assignee.id, email: r.assignee.email, role: r.assignee.role }
+        : null,
       // Diagnostic snapshot from the latest external_api_log row so the
       // admin UI can show *why* sync failed without opening backend logs.
       // All fields are null when no log exists yet (e.g. rows before
@@ -358,6 +370,18 @@ const groupedByEmail = asyncHandler(async (req, res) => {
   if (req.query.externalSyncStatus) {
     conds.push(Prisma.sql`external_sync_status::text = ${String(req.query.externalSyncStatus)}`);
   }
+  // Lead-ownership filter (Phase 2). Accepts UUID, "me", or "unassigned".
+  // Parameterised through Prisma.sql so we keep SQL injection safe.
+  if (req.query.assignedTo) {
+    const v = String(req.query.assignedTo);
+    if (v === 'me') {
+      if (req.user?.id) conds.push(Prisma.sql`assigned_to = ${req.user.id}::uuid`);
+    } else if (v === 'unassigned') {
+      conds.push(Prisma.sql`assigned_to IS NULL`);
+    } else {
+      conds.push(Prisma.sql`assigned_to = ${v}::uuid`);
+    }
+  }
   const from = req.query.fromDate ? new Date(req.query.fromDate) : null;
   const to   = req.query.toDate   ? new Date(req.query.toDate)   : null;
   if (from && !Number.isNaN(from.getTime())) conds.push(Prisma.sql`created_at >= ${from}`);
@@ -397,6 +421,21 @@ const groupedByEmail = asyncHandler(async (req, res) => {
     for (const log of logs) {
       if (!logByEnrollment.has(log.enrollment_id)) logByEnrollment.set(log.enrollment_id, log);
     }
+  }
+
+  // Assignee enrichment — one batched user lookup for every distinct
+  // assigned_to in the page. Keeps the response self-contained so the
+  // admin UI can render the Assignee column without per-row fetches.
+  const assigneeIds = Array.from(
+    new Set(rows.map((r) => r.assigned_to).filter(Boolean)),
+  );
+  const assigneeById = new Map();
+  if (assigneeIds.length > 0) {
+    const users = await db.user.findMany({
+      where:  { id: { in: assigneeIds } },
+      select: { id: true, email: true, role: true },
+    });
+    for (const u of users) assigneeById.set(u.id, u);
   }
 
   // Active plan per email = the student's LATEST PAID enrollment's plan. Drives
@@ -457,6 +496,11 @@ const groupedByEmail = asyncHandler(async (req, res) => {
       internalPaymentStatus: r.internal_payment_status ?? null,
       externalSyncStatus:    r.external_sync_status ?? null,
       enrollmentCount:       r.email_count ?? 1,
+      // Lead-ownership snapshot. assignedTo is the raw FK (null when
+      // unassigned); assignee is the enriched user object so the table
+      // cell can render the employee email directly.
+      assignedTo:            r.assigned_to ?? null,
+      assignee:              r.assigned_to ? (assigneeById.get(r.assigned_to) ?? null) : null,
       // Latest-paid plan for this student (Plan ID + remaining days). Null when
       // the student has no paid plan yet.
       activePlan: activeByEmail.get(String(r.email).toLowerCase()) || null,

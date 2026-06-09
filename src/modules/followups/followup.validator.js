@@ -27,7 +27,14 @@ const listFollowupsQuerySchema = Joi.object({
   sortOrder: Joi.string().valid('asc', 'desc').default('desc'),
   search: Joi.string().trim().max(255).optional(),
   status: Joi.string().valid(...FOLLOWUP_STATUS_VALUES).optional(),
-  assignedTo: Joi.string().uuid().optional(),
+  // UUID OR one of the special keywords:
+  //   "me"          → resolves to req.user.id in the service
+  //   "unassigned"  → assigned_to IS NULL
+  // Bare UUIDs continue to work for the existing admin filter.
+  assignedTo: Joi.alternatives().try(
+    Joi.string().uuid(),
+    Joi.string().valid('me', 'unassigned'),
+  ).optional(),
   dateFrom: Joi.date().iso().optional(),
   dateTo: Joi.date().iso().min(Joi.ref('dateFrom')).optional(),
 });
