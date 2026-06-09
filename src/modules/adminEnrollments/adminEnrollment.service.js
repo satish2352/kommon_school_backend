@@ -12,7 +12,6 @@ const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.se
 const { runCouponValidation } = require('../internalPlans/internalPlan.service');
 const { enqueueExternalApiSync } = require('../../queues/externalApi.queue');
 const auditService = require('../audit/audit.service');
-const followupService = require('../followups/followup.service');
 
 // ---------------------------------------------------------------------------
 // CSV required column names (case-insensitive matching)
@@ -305,24 +304,6 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
     paymentId: null,
     traceId,
   });
-
-  // Ensure a Followup row exists so the lead is visible in the admin
-  // Follow-ups page and (once assigned) the employee portal. Idempotent
-  // and fire-and-forget — failure here must not break enrollment creation.
-  try {
-    await followupService.autoCreateFromDeadLetter({
-      enrollmentId: enrollment.id,
-      status:       'new',
-      traceId,
-    });
-  } catch (err) {
-    logger.warn({
-      msg:           'followup_auto_create_failed_admin_manual',
-      traceId,
-      enrollment_id: enrollment.id,
-      error:         err?.message || String(err),
-    });
-  }
 
   return {
     enrollment: {
@@ -619,23 +600,6 @@ async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL',
     paymentId: createdPaymentId,
     traceId,
   });
-
-  // Same auto-create as the manual path — admin-created internal enrollments
-  // should be follow-up-trackable from day one. Idempotent + non-fatal.
-  try {
-    await followupService.autoCreateFromDeadLetter({
-      enrollmentId: enrollment.id,
-      status:       'new',
-      traceId,
-    });
-  } catch (err) {
-    logger.warn({
-      msg:           'followup_auto_create_failed_admin_internal',
-      traceId,
-      enrollment_id: enrollment.id,
-      error:         err?.message || String(err),
-    });
-  }
 
   return {
     enrollment: {
