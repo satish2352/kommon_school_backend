@@ -27,14 +27,22 @@ const FOLLOWUP_STATUSES = [
 const ALLOWED_SORT_FIELDS = ['created_at', 'updated_at', 'next_followup_date', 'status'];
 
 /**
- * Auto-create a marketing followup when an enrollment hits the dead-letter queue.
- * Idempotent — if an active (non-closed) followup already exists for the enrollment,
- * the existing record is returned without creating a duplicate.
+ * Idempotently ensure a Followup row exists for an enrollment.
  *
- * @param {{ enrollmentId: string, reason: string, traceId: string }} opts
+ * Name kept for backwards compatibility — historically this was only
+ * called from the external-API dead-letter handler. It is now also
+ * invoked by:
+ *   - the employee portal's lazy-create on first note/status (status='new')
+ *   - the admin manual + bulk enrollment creators (status='new')
+ *   - any future "ensure followup" path that wants the same idempotency.
+ *
+ * The `status` parameter defaults to 'payment_pending' to preserve the
+ * historical dead-letter behaviour; callers in the new flows pass 'new'.
+ *
+ * @param {{ enrollmentId: string, reason?: string, traceId?: string, status?: string }} opts
  * @returns {Promise<object>} — the followup (new or existing)
  */
-async function autoCreateFromDeadLetter({ enrollmentId, reason, traceId }) {
+async function autoCreateFromDeadLetter({ enrollmentId, reason, traceId, status = 'payment_pending' }) {
   const existing = await repo.findActiveForEnrollment(enrollmentId);
   if (existing) {
     logger.info({
@@ -48,7 +56,7 @@ async function autoCreateFromDeadLetter({ enrollmentId, reason, traceId }) {
 
   const followup = await repo.createFollowup({
     enrollment_id: enrollmentId,
-    status: 'payment_pending',
+    status,
     reason: reason ? String(reason).slice(0, 255) : null,
   });
 
@@ -57,6 +65,7 @@ async function autoCreateFromDeadLetter({ enrollmentId, reason, traceId }) {
     traceId,
     enrollment_id: enrollmentId,
     followup_id: followup.id,
+    status,
     reason,
   });
 
