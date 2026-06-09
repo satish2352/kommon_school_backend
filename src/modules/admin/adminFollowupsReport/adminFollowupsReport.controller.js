@@ -57,16 +57,30 @@ const listReport = asyncHandler(async (req, res) => {
 
   const where = { deleted_at: null };
 
+  // Status filter resolution, in priority order:
+  //   1. explicit ?status=<value>                            (sharp filter)
+  //   2. ?openOnly=true                                      (hide all 5 terminals)
+  //   3. ?excludeStatuses=<csv>                              (subset exclusion)
+  //   4. nothing                                             (return everything)
+  //
+  // The page-level "out of scope" list (payment_completed + lost) is
+  // sent by the frontend on every request via excludeStatuses. openOnly
+  // applies a STRICTER subset on top of it for the default OPEN view.
   if (req.query.status) {
     // Accept either UPPERCASE (frontend) or lowercase (internal); normalise to lowercase for DB
     where.status = req.query.status.toLowerCase();
   } else if (req.query.openOnly) {
-    // Default Follow-Ups view — actionable only. Terminal statuses are
-    // hidden so the page is dominated by leads that still need work.
-    // Explicit `status=<terminal>` filter still wins (it's an `else if`).
     where.status = {
       notIn: ['payment_completed', 'followup_closed', 'converted', 'lost', 'closed'],
     };
+  } else if (req.query.excludeStatuses) {
+    const list = String(req.query.excludeStatuses)
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    if (list.length > 0) {
+      where.status = { notIn: list };
+    }
   }
 
   // Lead-ownership filter — UUID or special keyword (me / unassigned).
