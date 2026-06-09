@@ -3,21 +3,22 @@
 const Joi = require('joi');
 
 // Duration value + unit. Previously limited to a fixed 1/3/6/12 month set; now
-// admin can define any positive integer duration in DAYS or MONTHS per pricing
-// row. The value is capped generously (10 years' worth of days) to guard against
-// typos; the frontend applies tighter per-unit limits. Uniqueness of
-// (planId, durationMonths) is still enforced by the DB @@unique index.
-const MIN_DURATION_VALUE = 1;
+// admin can define any positive duration in DAYS or MONTHS per pricing row,
+// including fractional values (e.g. 1.5 Months) — up to 2 decimal places. The
+// value is capped generously (10 years' worth of days) to guard against typos;
+// the frontend applies tighter per-unit limits. Uniqueness is per
+// (planId, durationMonths, durationUnit) via the DB @@unique index, so the same
+// number can coexist in different units (e.g. "2 Days" and "2 Months").
 const MAX_DURATION_VALUE = 3650;
 const VALID_DURATION_UNITS = ['DAYS', 'MONTHS'];
 const durationMonthsSchema = Joi.number()
-  .integer()
-  .min(MIN_DURATION_VALUE)
+  .greater(0)
   .max(MAX_DURATION_VALUE)
+  .precision(2)
   .messages({
-    'number.base': 'Duration must be a number',
-    'number.min':  `Duration must be at least ${MIN_DURATION_VALUE}`,
-    'number.max':  `Duration must be at most ${MAX_DURATION_VALUE}`,
+    'number.base':     'Duration must be a number',
+    'number.greater':  'Duration must be greater than 0',
+    'number.max':      `Duration must be at most ${MAX_DURATION_VALUE}`,
   });
 const durationUnitSchema = Joi.string()
   .valid(...VALID_DURATION_UNITS)

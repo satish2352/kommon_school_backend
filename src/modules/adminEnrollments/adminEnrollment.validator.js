@@ -93,4 +93,20 @@ const adminInternalEnrollmentSchema = Joi.object({
   notes:              Joi.string().max(500).optional().allow(null, ''),
 }).options({ stripUnknown: true });
 
-module.exports = { manualEnrollmentSchema, adminInternalEnrollmentSchema };
+// ---------------------------------------------------------------------------
+// Bulk CSV row schema — only the student-identity fields. The Course +
+// Internal Plan (and thus all pricing) are supplied once via the upload's
+// planContext and applied to every row, so they're NOT in the CSV.
+// ---------------------------------------------------------------------------
+const bulkInternalRowSchema = Joi.object({
+  name: Joi.string().trim().min(2).max(100).pattern(NAME_REGEX).required()
+    .messages({ 'string.pattern.base': 'name must contain letters and spaces only' }),
+  email: Joi.string().email().lowercase().trim().max(255).pattern(EMAIL_REGEX).required()
+    .messages({ 'string.pattern.base': 'email must be a valid email address' }),
+  phone: Joi.string().pattern(INDIAN_MOBILE_REGEX).required().messages({
+    'string.pattern.base':
+      'phone must be a 10-digit Indian mobile number starting with 6, 7, 8, or 9',
+  }),
+}).options({ stripUnknown: true });
+
+module.exports = { manualEnrollmentSchema, adminInternalEnrollmentSchema, bulkInternalRowSchema };

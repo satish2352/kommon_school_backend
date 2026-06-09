@@ -529,8 +529,9 @@ model PlanPricing {
   planId          Int        @map("plan_id")
   // Numeric duration value. Interpreted in `durationUnit` (DAYS or MONTHS).
   // Column name kept as duration_months for migration continuity; it now holds
-  // the value in whichever unit the row uses.
-  durationMonths  Int        @map("duration_months")
+  // the value in whichever unit the row uses. Decimal(10,2) so fractional
+  // durations (e.g. 1.5 Months) are distinct from whole ones (1 Month).
+  durationMonths  Decimal    @map("duration_months") @db.Decimal(10, 2)
   durationUnit    String     @default("MONTHS") @map("duration_unit") @db.VarChar(10)
   basePrice       Decimal    @map("base_price") @db.Decimal(10,2)
   discountPercent Decimal    @default(0) @map("discount_percent") @db.Decimal(5,2)
@@ -546,7 +547,9 @@ model PlanPricing {
   updatedAt       DateTime   @updatedAt @map("updated_at")
   plan            Plan       @relation(fields: [planId], references: [id], onDelete: Cascade)
   enrollments     Enrollment[] @relation("EnrollmentPlanPricing")
-  @@unique([planId, durationMonths])
+  // Uniqueness is per (plan, duration value, duration unit) so the same number
+  // can coexist in different units — e.g. "2 Days" and "2 Months" on one plan.
+  @@unique([planId, durationMonths, durationUnit])
   @@map("plan_pricing")
   @@index([status])
 }

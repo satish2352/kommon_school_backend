@@ -7,20 +7,18 @@ const ApiError = require('../../utils/ApiError');
 const logger = require('../../config/logger');
 const { ENROLLMENT_CODE_PREFIX, ERROR_CODES } = require('../../config/constants');
 const { buildPayload, executeWebhookDelivery } = require('../enrollments/enrollmentWebhook.service');
-const { manualEnrollmentSchema } = require('./adminEnrollment.validator');
+const { bulkInternalRowSchema } = require('./adminEnrollment.validator');
 const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.service');
 const { runCouponValidation } = require('../internalPlans/internalPlan.service');
 const { enqueueExternalApiSync } = require('../../queues/externalApi.queue');
 const auditService = require('../audit/audit.service');
 
 // ---------------------------------------------------------------------------
-// CSV required column names (case-insensitive matching)
+// CSV required column names (case-insensitive matching).
+// Only the student-identity fields — the Course + Internal Plan come from the
+// upload's planContext and apply to every row, so they're not in the CSV.
 // ---------------------------------------------------------------------------
-const REQUIRED_CSV_COLUMNS = ['name', 'email', 'phone', 'role', 'planTier', 'durationMonths'];
-const ALL_CSV_COLUMNS = [
-  'name', 'email', 'phone', 'role', 'education', 'readiness',
-  'source', 'promoCode', 'planTier', 'durationMonths', 'notes',
-];
+const REQUIRED_CSV_COLUMNS = ['name', 'email', 'phone'];
 const CSV_MAX_ROWS = 1000;
 
 // ---------------------------------------------------------------------------
@@ -625,16 +623,38 @@ async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL',
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a CSV buffer, validate rows, and call createManualEnrollment per row.
+ * Parse a CSV buffer (name,email,phone) and call createInternalEnrollment per
+ * row, enrolling every student into the Course + Internal Plan supplied via the
+ * upload's planContext. Pricing is re-resolved server-side from the plan.
  *
  * @param {{
  *   fileBuffer: Buffer,
  *   actor: object,
- *   traceId: string
+ *   traceId: string,
+ *   req?: object,
+ *   courseId: number,
+ *   internalPlanId: number,
+ *   internalCouponCode?: string|null,
  * }} params
  * @returns {Promise<{ total, success, failed, rows }>}
  */
-async function createBulkEnrollments({ fileBuffer, actor, traceId }) {
+async function createBulkEnrollments({ fileBuffer, actor, traceId, req, courseId, internalPlanId, internalCouponCode }) {
+  // The Course + Internal Plan are picked once in the UI and applied to every
+  // row, so they're required up-front (the CSV carries no plan columns).
+  const courseIdNum       = Number(courseId);
+  const internalPlanIdNum = Number(internalPlanId);
+  if (!Number.isInteger(courseIdNum) || courseIdNum <= 0
+   || !Number.isInteger(internalPlanIdNum) || internalPlanIdNum <= 0) {
+    throw new ApiError(
+      400,
+      ERROR_CODES.VALIDATION_ERROR,
+      'Pick a Course and an Internal Plan before uploading — they apply to every row in the CSV.',
+    );
+  }
+  const couponCodeForAll = internalCouponCode
+    ? String(internalCouponCode).trim().toUpperCase()
+    : undefined;
+
   // Parse CSV
   let records;
   try {
@@ -678,7 +698,7 @@ async function createBulkEnrollments({ fileBuffer, actor, traceId }) {
   }
 
   /**
-   * Normalise a raw CSV record into the shape expected by manualEnrollmentSchema.
+   * Normalise a raw CSV record into the shape expected by bulkInternalRowSchema.
    * Headers may be in any case variant, so we do a case-insensitive lookup.
    */
   function normaliseRow(rawRecord) {
@@ -687,19 +707,9 @@ async function createBulkEnrollments({ fileBuffer, actor, traceId }) {
       lower[k.trim().toLowerCase()] = v;
     }
     return {
-      name:           lower['name']          || undefined,
-      email:          lower['email']         || undefined,
-      phone:          lower['phone']         || undefined,
-      role:           lower['role']          || undefined,
-      education:      lower['education']     || undefined,
-      readiness:      lower['readiness']     || undefined,
-      source:         lower['source']        || undefined,
-      promoCode:      lower['promocode']     || undefined,
-      planTier:       lower['plantier']      || undefined,
-      durationMonths: lower['durationmonths']
-        ? Number(lower['durationmonths'])
-        : undefined,
-      notes:          lower['notes']         || undefined,
+      name:  lower['name']  || undefined,
+      email: lower['email'] || undefined,
+      phone: lower['phone'] || undefined,
     };
   }
 
@@ -712,8 +722,8 @@ async function createBulkEnrollments({ fileBuffer, actor, traceId }) {
     const rowIndex = i + 1;
     const normalised = normaliseRow(records[i]);
 
-    // Validate row via Joi schema
-    const { error: joiError, value: rowData } = manualEnrollmentSchema.validate(normalised, {
+    // Validate row via Joi schema (name + email + phone only)
+    const { error: joiError, value: rowData } = bulkInternalRowSchema.validate(normalised, {
       abortEarly: true,
       stripUnknown: true,
     });
@@ -730,11 +740,21 @@ async function createBulkEnrollments({ fileBuffer, actor, traceId }) {
     }
 
     try {
-      const result = await createManualEnrollment({
-        data: rowData,
+      // Every row enrols into the Course + Internal Plan chosen in the UI; the
+      // service re-resolves all pricing from the plan's course fee + coupon.
+      const result = await createInternalEnrollment({
+        data: {
+          name:               rowData.name,
+          email:              rowData.email,
+          phone:              rowData.phone,
+          courseId:           courseIdNum,
+          internalPlanId:     internalPlanIdNum,
+          internalCouponCode: couponCodeForAll,
+        },
         actor,
         adminSource: 'CSV',
         traceId,
+        req,
       });
 
       successCount++;

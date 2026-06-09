@@ -32,6 +32,7 @@ const crypto = require('crypto');
 const { getPrismaClient } = require('../../config/database');
 const logger        = require('../../config/logger');
 const sumagoService = require('./sumago.service');
+const { internalDurationLabel } = require('../../utils/planDuration');
 
 function getDb() {
   return getPrismaClient();
@@ -115,7 +116,9 @@ function buildLocalPlan(e) {
   if (e?.internal_plan) {
     return {
       name:       e.internal_plan.name || null,
-      duration:   fmtInternalDuration(e.internal_plan.duration),
+      // Real duration derived from the Plan ID (e.g. "30 Days"); the enum is a
+      // hardcoded 6_MONTHS placeholder and can't be trusted. See utils/planDuration.
+      duration:   internalDurationLabel(e.internal_plan) || fmtInternalDuration(e.internal_plan.duration),
       courseName: e.internal_plan.course?.nameOfCourseAsGroup || null,
       source:     'INTERNAL',
     };
@@ -472,9 +475,10 @@ async function listFromDb(opts, traceId) {
       candidate_type:          true,
       internal_plan: {
         select: {
-          name:     true,
-          duration: true,
-          course:   { select: { nameOfCourseAsGroup: true } },
+          name:           true,
+          duration:       true,
+          externalPlanId: true,
+          course:         { select: { nameOfCourseAsGroup: true } },
         },
       },
       plan_pricing: {

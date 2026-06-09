@@ -190,6 +190,10 @@ const getById = asyncHandler(async (req, res) => {
           refId:    e.internal_plan.refId,
           name:     e.internal_plan.name,
           duration: e.internal_plan.duration,
+          externalPlanId: e.internal_plan.externalPlanId ?? null,
+          // Real duration derived from the Plan ID (e.g. 30 Days / 3 Months);
+          // falls back to the legacy enum label when the code has no token.
+          durationLabel:  internalDurationLabel(e.internal_plan),
           course: e.internal_plan.course
             ? {
                 id:   e.internal_plan.course.id,
@@ -297,6 +301,39 @@ const internalGrouped = asyncHandler(async (req, res) => {
   `;
   const total = totalRows?.[0]?.total ?? 0;
 
+  // Active plan per email = the student's LATEST PAID enrollment's plan, so this
+  // page can show the same "Active Plan" (Plan ID + days left) column as the
+  // main Enrollments page. For internal rows the Plan ID is the internal plan's
+  // externalPlanId (configured on /admin/internal-plans). Mirrors groupedByEmail.
+  const activeByEmail = new Map();
+  const emailsForActive = rows.map((r) => r.email).filter(Boolean);
+  if (emailsForActive.length > 0) {
+    const paidRows = await db.enrollment.findMany({
+      where: {
+        email:      { in: emailsForActive },
+        deleted_at: null,
+        status:     { in: ACTIVE_PLAN_STATUSES },
+      },
+      orderBy: { created_at: 'desc' },
+      include: {
+        plan_pricing:  { include: { plan: true } },
+        internal_plan: { select: { name: true, duration: true, externalPlanId: true } },
+        payments:      { select: { status: true, created_at: true } },
+      },
+    });
+    for (const pr of paidRows) {
+      const key = String(pr.email).toLowerCase();
+      if (activeByEmail.has(key)) continue; // first hit = latest (orderBy desc)
+      const win = computePlanWindow(pr);
+      activeByEmail.set(key, {
+        externalPlanId: pr.internal_plan?.externalPlanId || pr.plan_pricing?.externalPlanId || null,
+        planLabel:      pr.internal_plan?.name || pr.plan_pricing?.plan?.name || null,
+        daysLeft:       win.daysLeft,
+        planExpiryAt:   win.planExpiryAt,
+      });
+    }
+  }
+
   const items = rows.map((r) => ({
     id:           r.id,
     enrollmentId: r.enrollment_code || r.id,
@@ -313,6 +350,8 @@ const internalGrouped = asyncHandler(async (req, res) => {
     enrollmentCount:       r.email_count ?? 1,
     createdAt:             r.created_at,
     updatedAt:             r.updated_at,
+    // Latest-paid plan for this student (Plan ID + remaining days); null when none.
+    activePlan: activeByEmail.get(String(r.email).toLowerCase()) || null,
   }));
 
   sendSuccess(res, HTTP.OK, {
@@ -486,13 +525,15 @@ const groupedByEmail = asyncHandler(async (req, res) => {
 // running plan and therefore no days-left.
 const ACTIVE_PLAN_STATUSES = ['paid', 'completed', 'sync_pending'];
 
-// Prisma surfaces the InternalPlanDuration enum by its JS identifier
-// (ONE_MONTH, …) regardless of the @map DB value ('1_MONTH', …). Map both
-// forms to a whole number of months so callers don't care which they get.
-const INTERNAL_DURATION_MONTHS = {
-  ONE_MONTH: 1, THREE_MONTHS: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12,
-  '1_MONTH': 1, '3_MONTHS': 3, '6_MONTHS': 6, '12_MONTHS': 12,
-};
+// Internal plans carry no real duration column — the form hardcodes the enum
+// (always 6_MONTHS), so it can't be trusted. The Plan ID code is the source of
+// truth (e.g. ..._30DAYS / ..._3MONTHS). Shared helpers live in utils so the
+// Sumago mirror sync resolves durations identically. See utils/planDuration.js.
+const {
+  INTERNAL_DURATION_MONTHS,
+  parseDurationFromPlanId,
+  internalDurationLabel,
+} = require('../../../utils/planDuration');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -519,9 +560,18 @@ function computePlanWindow(e) {
   // Resolve duration value + unit from whichever plan type this row carries.
   let value = null;
   let unit = 'MONTHS';
-  if (e.internal_plan?.duration != null) {
-    value = INTERNAL_DURATION_MONTHS[e.internal_plan.duration] ?? null;
-    unit = 'MONTHS';
+  if (e.internal_plan) {
+    // Internal plans: derive the real duration from the Plan ID code
+    // (e.g. ..._30DAYS / ..._3MONTHS); fall back to the legacy enum when the
+    // code carries no duration token.
+    const parsed = parseDurationFromPlanId(e.internal_plan.externalPlanId);
+    if (parsed) {
+      value = parsed.value;
+      unit  = parsed.unit;
+    } else if (e.internal_plan.duration != null) {
+      value = INTERNAL_DURATION_MONTHS[e.internal_plan.duration] ?? null;
+      unit  = 'MONTHS';
+    }
   } else if (e.plan_pricing?.durationMonths != null) {
     value = Number(e.plan_pricing.durationMonths);
     unit = String(e.plan_pricing.durationUnit || 'MONTHS').toUpperCase() === 'DAYS' ? 'DAYS' : 'MONTHS';

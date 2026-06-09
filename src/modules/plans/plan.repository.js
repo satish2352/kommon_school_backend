@@ -81,28 +81,30 @@ async function findPricingById(pricingId) {
 }
 
 /**
- * Find a PlanPricing by plan + duration (the unique compound key).
+ * Find a PlanPricing by plan + duration value + unit (the unique compound key).
  * @param {number} planId
  * @param {number} durationMonths
+ * @param {string} durationUnit - 'DAYS' | 'MONTHS'
  * @returns {Promise<object|null>}
  */
-async function findPricingByPlanAndDuration(planId, durationMonths) {
+async function findPricingByPlanAndDuration(planId, durationMonths, durationUnit) {
   return getDb().planPricing.findUnique({
-    where: { planId_durationMonths: { planId, durationMonths } },
+    where: { planId_durationMonths_durationUnit: { planId, durationMonths, durationUnit } },
   });
 }
 
 /**
- * Upsert a single PlanPricing row for a plan + duration combination.
+ * Upsert a single PlanPricing row for a plan + duration value + unit combination.
  * @param {number} planId
  * @param {number} durationMonths
+ * @param {string} durationUnit - 'DAYS' | 'MONTHS'
  * @param {object} data
  * @returns {Promise<object>}
  */
-async function upsertPricing(planId, durationMonths, data) {
+async function upsertPricing(planId, durationMonths, durationUnit, data) {
   return getDb().planPricing.upsert({
-    where: { planId_durationMonths: { planId, durationMonths } },
-    create: { planId, durationMonths, ...data },
+    where: { planId_durationMonths_durationUnit: { planId, durationMonths, durationUnit } },
+    create: { planId, durationMonths, durationUnit, ...data },
     update: data,
   });
 }
