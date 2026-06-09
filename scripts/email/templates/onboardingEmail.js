@@ -47,8 +47,10 @@ const BRAND = {
  * @param {string} [params.enrollmentCode]  Human-friendly enrollment code.
  * @returns {{ subject: string, html: string, text: string }}
  */
-function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollmentCode }) {
+function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollmentCode, brandName }) {
   const firstName = (name && String(name).trim().split(/\s+/)[0]) || 'there';
+  // Dynamic brand name from site settings; falls back to the built-in default.
+  const brandName_ = (brandName && String(brandName).trim()) || BRAND.name;
   const safe = {
     firstName: escapeHtml(firstName),
     username: escapeHtml(username),
@@ -57,11 +59,11 @@ function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollme
     enrollmentCode: enrollmentCode ? escapeHtml(enrollmentCode) : '',
   };
 
-  const subject = `Welcome to ${BRAND.name} — Your login details inside`;
+  const subject = `Welcome to ${brandName_} — Your login details inside`;
 
   // ---- Plain-text fallback -------------------------------------------------
   const text = [
-    `Welcome to ${BRAND.name}, ${firstName}!`,
+    `Welcome to ${brandName_}, ${firstName}!`,
     '',
     'Your enrollment is confirmed and your account is ready.',
     enrollmentCode ? `Enrollment ID: ${enrollmentCode}` : null,
@@ -81,7 +83,7 @@ function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollme
     '',
     `Need help? Reach us at ${BRAND.supportEmail}.`,
     '',
-    `— The ${BRAND.name} Team`,
+    `— The ${brandName_} Team`,
   ]
     .filter((line) => line !== null)
     .join('\n');
@@ -104,7 +106,7 @@ function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollme
   <title>${escapeHtml(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background-color:${BRAND.bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <span style="display:none;font-size:1px;color:${BRAND.bg};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">Your ${BRAND.name} account is ready — sign in with the credentials inside.</span>
+  <span style="display:none;font-size:1px;color:${BRAND.bg};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">Your ${brandName_} account is ready — sign in with the credentials inside.</span>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BRAND.bg};padding:24px 12px;">
     <tr>
       <td align="center">
@@ -119,7 +121,7 @@ function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollme
                     <div style="width:44px;height:44px;border-radius:12px;background-color:rgba(255,255,255,0.18);text-align:center;line-height:44px;color:#ffffff;font-size:22px;font-weight:800;">K</div>
                   </td>
                   <td style="padding-left:12px;vertical-align:middle;">
-                    <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.1;">${BRAND.name}</div>
+                    <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.1;">${brandName_}</div>
                     <div style="color:rgba(255,255,255,0.75);font-size:12px;">${BRAND.tagline}</div>
                   </td>
                 </tr>
@@ -197,7 +199,7 @@ function buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollme
                 Need help? Contact us at <a href="mailto:${BRAND.supportEmail}" style="color:${BRAND.primary};text-decoration:none;">${BRAND.supportEmail}</a>.
               </p>
               <p style="margin:0;color:#94A3B8;font-size:12px;">
-                &copy; ${BRAND.name}. You received this email because an account was created for ${safe.username}.
+                &copy; ${brandName_}. You received this email because an account was created for ${safe.username}.
               </p>
             </td>
           </tr>

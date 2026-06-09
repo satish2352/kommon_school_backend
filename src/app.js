@@ -3,6 +3,7 @@
 require('dotenv').config();
 require('./config/env'); // validates env on boot
 
+const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -41,6 +42,7 @@ const plansAdminRoutes = require('./modules/plans/plan.admin.routes');
 const adminEnrollmentManualRoutes = require('./modules/adminEnrollments/adminEnrollment.routes');
 const internalPlansRoutes = require('./modules/internalPlans/internalPlan.routes');
 const courseNameRoutes = require('./modules/courseNameMaster/courseName.routes');
+const siteSettingsRoutes = require('./modules/siteSettings/siteSettings.routes');
 
 const app = express();
 
@@ -87,6 +89,9 @@ app.options('*', cors(corsOptions));
 
 app.use(compression());
 app.use(requestLogger);
+
+// Static serving for uploaded assets (e.g. the branding logo). Public, no auth.
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Health endpoints — never rate-limited, never authenticated
 app.get('/health', (_req, res) => {
@@ -145,6 +150,7 @@ app.use('/api/v1/webhooks', webhookAdminRoutes);
 app.use('/api/v1/admin/internal-plans', internalPlansRoutes);
 // Course Name Master CRUD
 app.use('/api/v1/admin/course-names', courseNameRoutes);
+app.use('/api/v1/settings', siteSettingsRoutes);
 
 app.use((req, res) => {
   return sendError(

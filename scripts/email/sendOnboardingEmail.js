@@ -44,7 +44,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * @param {string} [params.traceId]      Correlation id for logs.
  * @returns {Promise<{sent:boolean, skipped?:boolean, messageId?:string, previewUrl?:string, error?:string}>}
  */
-async function sendOnboardingEmail({ to, name, username, tempPassword, loginUrl, enrollmentCode, traceId }) {
+async function sendOnboardingEmail({ to, name, username, tempPassword, loginUrl, enrollmentCode, brandName, traceId }) {
   if (!isMailEnabled()) {
     logger.warn({
       msg: 'onboarding_email_skipped_disabled',
@@ -55,7 +55,7 @@ async function sendOnboardingEmail({ to, name, username, tempPassword, loginUrl,
     return { sent: false, skipped: true };
   }
 
-  const { subject, html, text } = buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollmentCode });
+  const { subject, html, text } = buildOnboardingEmail({ name, username, tempPassword, loginUrl, enrollmentCode, brandName });
   const transport = getTransport();
   const message = { from: getFromAddress(), to, subject, html, text };
 
