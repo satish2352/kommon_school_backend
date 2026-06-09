@@ -60,6 +60,13 @@ const listReport = asyncHandler(async (req, res) => {
   if (req.query.status) {
     // Accept either UPPERCASE (frontend) or lowercase (internal); normalise to lowercase for DB
     where.status = req.query.status.toLowerCase();
+  } else if (req.query.openOnly) {
+    // Default Follow-Ups view — actionable only. Terminal statuses are
+    // hidden so the page is dominated by leads that still need work.
+    // Explicit `status=<terminal>` filter still wins (it's an `else if`).
+    where.status = {
+      notIn: ['payment_completed', 'followup_closed', 'converted', 'lost', 'closed'],
+    };
   }
 
   // Lead-ownership filter — UUID or special keyword (me / unassigned).
