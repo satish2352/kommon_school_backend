@@ -15,6 +15,19 @@ router.use(hasPermission(PERMISSIONS.ENROLLMENTS_VIEW));
 
 router.get('/', validate(listEnrollmentsQuerySchema, 'query'), controller.list);
 
+// GET /api/v1/admin/enrollments/grouped — one row per email (latest + count)
+// across all enrollments, with the same filters as the flat list. BEFORE /:id.
+router.get('/grouped', controller.groupedByEmail);
+
+// GET /api/v1/admin/enrollments/internal-grouped — one row per email (latest +
+// count) for internal enrollments. Declared BEFORE /:id.
+router.get('/internal-grouped', controller.internalGrouped);
+
+// GET /api/v1/admin/enrollments/by-email?email=... — all enrollments sharing an
+// email (grouped history). Declared BEFORE the /:id route so "by-email" is not
+// captured as an enrollment id.
+router.get('/by-email', controller.historyByEmail);
+
 // GET /api/v1/admin/enrollments/:id — single enrollment + plan + course
 // + ALL payment rows. Powers the InternalEnrollments detail drawer.
 // Declared AFTER the /manual /internal /bulk /csv-template routes on

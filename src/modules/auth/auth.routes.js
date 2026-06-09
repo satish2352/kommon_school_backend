@@ -13,6 +13,8 @@ router.post('/login', loginLimiter, validate(loginSchema), controller.login);
 router.post('/refresh', validate(refreshSchema), controller.refresh);
 router.post('/logout', authenticate, controller.logout);
 router.get('/me', authenticate, controller.me);
+// Self-service panel overview — own profile + own transaction history.
+router.get('/me/account', authenticate, controller.accountOverview);
 
 // Phase 3A: change-password — requires a valid access token
 router.post(

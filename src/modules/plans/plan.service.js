@@ -170,6 +170,7 @@ async function create(body, traceId) {
           return {
             planId:          created.id,
             durationMonths:  p.durationMonths,
+            durationUnit:    p.durationUnit || 'MONTHS',
             basePrice:       base,
             discountPercent: discount,
             finalPrice:      computed,
@@ -308,6 +309,7 @@ async function upsertPricing(planId, durationMonths, body, traceId) {
   }
 
   const data = {
+    durationUnit:    body.durationUnit || 'MONTHS',
     basePrice:       base,
     discountPercent: discount,
     finalPrice:      computed,
@@ -433,7 +435,7 @@ async function selectForEnrollment(enrollmentId, planPricingId, traceId) {
         status:        enrollment.status,
       });
       throw ApiError.conflict(
-        'This enrollment has already been paid. The plan cannot be changed.',
+        'This enrollment already exists. Please log in to your student panel to purchase a plan.',
       );
     }
 
@@ -456,7 +458,7 @@ async function selectForEnrollment(enrollmentId, planPricingId, traceId) {
         successful_payment:  successfulPayment.id,
       });
       throw ApiError.conflict(
-        'This enrollment has already been paid. The plan cannot be changed.',
+        'This enrollment already exists. Please log in to your student panel to purchase a plan.',
       );
     }
 

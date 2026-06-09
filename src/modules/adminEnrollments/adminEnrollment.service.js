@@ -179,52 +179,12 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
   let enrollment;
 
   await db.$transaction(async (tx) => {
-    // 0. Email uniqueness — admin manual / bulk paths reject any active
-    //    enrollment for the same email, regardless of payment status:
-    //      - Paid existing row     → STUDENT_ALREADY_REGISTERED (immutable)
-    //      - Incomplete public row → EMAIL_ALREADY_ENROLLED (admin must
-    //        resolve manually, since admin-created records skip the
-    //        Razorpay flow and would orphan the prior public lead).
-    //
-    //    Checked inside the transaction to minimise the race window vs
-    //    concurrent admin submissions and against the public website
-    //    upsert path. The partial unique index in DB is the final guard
-    //    if two admin requests race past this check.
-    const emailLower = String(data.email || '').trim().toLowerCase();
-    if (emailLower) {
-      // Use lower(email) lookup to match the partial unique index and the
-      // public-flow resume helper. Joi lowercases inbound emails so this is
-      // belt-and-suspenders for any pre-existing mixed-case data.
-      const existingRows = await tx.$queryRaw`
-        SELECT id, status, enrollment_code FROM "enrollments"
-        WHERE lower(email) = lower(${emailLower}) AND deleted_at IS NULL
-        ORDER BY created_at DESC LIMIT 1
-        FOR UPDATE
-      `;
-      const existingByEmail = existingRows && existingRows[0] ? existingRows[0] : null;
-      if (existingByEmail) {
-        const PAID = ['paid', 'sync_pending', 'completed'];
-        const isPaid = PAID.includes(existingByEmail.status);
-        const successfulPayments = await tx.payment.count({
-          where: { enrollment_id: existingByEmail.id, status: 'success' },
-        });
-        const code = isPaid || successfulPayments > 0
-          ? ERROR_CODES.STUDENT_ALREADY_REGISTERED
-          : 'EMAIL_ALREADY_ENROLLED';
-        const message = isPaid || successfulPayments > 0
-          ? 'A student is already registered with this email.'
-          : 'An incomplete enrollment with this email already exists. Resolve or soft-delete it before creating a new one.';
-        logger.warn({
-          msg: 'admin_enrollment_email_already_exists',
-          traceId,
-          existing_enrollment_id: existingByEmail.id,
-          existing_enrollment_code: existingByEmail.enrollment_code,
-          existing_status: existingByEmail.status,
-          code,
-        });
-        throw new ApiError(409, code, message);
-      }
-    }
+    // 0. Repeat enrollments are allowed for admin-created records: every admin
+    //    submission inserts a NEW enrollment row, so a student's history
+    //    accumulates instead of overwriting a prior (possibly settled) record.
+    //    The public website flow still enforces one-active-per-email; that path
+    //    is untouched. The DB's partial unique index only blocks a duplicate
+    //    IN-PROGRESS draft, which admin rows never are (they insert at 'paid').
 
     // 1. Resolve planPricingId from (planTier, durationMonths)
     const planPricing = await tx.planPricing.findFirst({
@@ -266,45 +226,42 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
     const enrollmentCode = generateEnrollmentCode();
     const promoCode = (data.promoCode || 'NEW501').trim().toUpperCase();
 
-    // 4. Create enrollment at status='submitted', then transition to 'paid' in one update
-    //    We create then update (instead of create at paid directly) so the audit trail
-    //    is consistent with the normal flow shape (submitted → paid).
-    const created = await tx.enrollment.create({
-      data: {
-        first_name,
-        last_name,
-        email: data.email,
-        phone_number: data.phone,
-        name: data.name.trim(),
-        enrollment_code: enrollmentCode,
-        user_role: data.role || null,
-        education: data.education || null,
-        readiness: data.readiness || null,
-        source: data.source || null,
-        promo_code: promoCode,
-        plan: null,
-        group: null,
-        unit: null,
-        phase: null,
-        segment: null,
-        status: 'submitted',
-        amount: amountPaise,
-        plan_pricing_id: planPricing.id,
-        // Admin manual + bulk CSV are both INTERNAL by definition. The bulk
-        // path also routes through createManualEnrollment per row, so this
-        // single line marks both flows correctly.
-        candidate_type: 'INTERNAL',
-      },
-    });
+    // 4. Insert a fresh enrollment row directly at status='paid'. Admin records
+    //    are settled at creation, so there is no submitted → paid intermediate
+    //    (inserting at 'paid' also keeps clear of the one-in-progress-draft
+    //    unique index). external_sync_status='PENDING' marks the row as queued
+    //    for upstream push to Kommon School — same initial state the Razorpay
+    //    flow sets inside settlePayment(); the worker / inline fallback flips it
+    //    to SUCCESS / FAILED / DEAD_LETTER after the POST resolves.
+    const enrollmentData = {
+      first_name,
+      last_name,
+      email: data.email,
+      phone_number: data.phone,
+      name: data.name.trim(),
+      user_role: data.role || null,
+      education: data.education || null,
+      readiness: data.readiness || null,
+      source: data.source || null,
+      promo_code: promoCode,
+      plan: null,
+      group: null,
+      unit: null,
+      phase: null,
+      segment: null,
+      status: 'paid',
+      external_sync_status: 'PENDING',
+      amount: amountPaise,
+      plan_pricing_id: planPricing.id,
+      enrollment_code: enrollmentCode,
+      // Admin manual + bulk CSV are both INTERNAL by definition. The bulk
+      // path also routes through createManualEnrollment per row, so this
+      // single line marks both flows correctly.
+      candidate_type: 'INTERNAL',
+    };
 
-    // 5. Transition directly to 'paid' (skipping payment_pending + sync_pending).
-    //    external_sync_status='PENDING' marks the row as queued for upstream push
-    //    to Kommon School — same initial state the Razorpay flow sets inside
-    //    settlePayment(). The worker / inline fallback flips this to SUCCESS,
-    //    FAILED, or DEAD_LETTER after the POST resolves.
-    enrollment = await tx.enrollment.update({
-      where: { id: created.id },
-      data: { status: 'paid', external_sync_status: 'PENDING' },
+    enrollment = await tx.enrollment.create({
+      data: enrollmentData,
       include: {
         plan_pricing: {
           include: { plan: true },
@@ -513,73 +470,52 @@ async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL',
         }
       : null;
 
-    // ---- Lock #2: existing enrollment-by-email check (same as public flow) ----
-    const emailLower = String(data.email || '').trim().toLowerCase();
-    if (emailLower) {
-      const existingRows = await tx.$queryRaw`
-        SELECT id, status, enrollment_code FROM "enrollments"
-        WHERE lower(email) = lower(${emailLower}) AND deleted_at IS NULL
-        ORDER BY created_at DESC LIMIT 1
-        FOR UPDATE
-      `;
-      const existing = existingRows && existingRows[0] ? existingRows[0] : null;
-      if (existing) {
-        const PAID = ['paid', 'sync_pending', 'completed'];
-        const isPaid = PAID.includes(existing.status);
-        const successfulPayments = await tx.payment.count({
-          where: { enrollment_id: existing.id, status: 'success' },
-        });
-        if (isPaid || successfulPayments > 0) {
-          throw new ApiError(409, ERROR_CODES.STUDENT_ALREADY_REGISTERED,
-            'A student is already registered with this email.');
-        }
-        throw new ApiError(409, 'EMAIL_ALREADY_ENROLLED',
-          'An incomplete enrollment with this email already exists. Resolve or soft-delete it before creating a new one.');
-      }
-    }
+    // ---- Repeat enrollments allowed: always INSERT a new row ----
+    // Every admin internal enrollment creates a fresh record (settled at
+    // 'paid'), so a student's enrollment history accumulates per email instead
+    // of overwriting a prior record. The public website flow is unchanged.
 
-    // ---- Create enrollment with the full snapshot ----
+    // ---- Create the enrollment with the full snapshot ----
     const { first_name, last_name } = splitName(data.name);
     const enrollmentCode = generateEnrollmentCode();
+    const enrollmentData = {
+      first_name, last_name,
+      email: data.email,
+      phone_number: data.phone,
+      name: data.name.trim(),
+      user_role: data.role || null,
+      education: data.education || null,
+      readiness: data.readiness || null,
+      source: data.source || null,
+      candidate_type: 'INTERNAL',
+      plan: null, group: null, unit: null, phase: null, segment: null,
+      amount: finalAmountPaise,           // legacy column kept in sync with final
+      promo_code: couponCode,             // legacy column
+      // First-class snapshot columns:
+      internal_plan_id:        planSnapshot.id,
+      base_price_paise:        basePricePaise,
+      discount_amount_paise:   discountAmountPaise,
+      final_amount_paise:      finalAmountPaise,
+      amount_paid_paise:       amountPaidPaiseInitial,
+      coupon_code_snapshot:    couponCode,
+      coupon_snapshot:         persistedCouponSnapshot,
+      internal_payment_status: internalPaymentStatus,
+      // Lifecycle: admin record is settled at creation
+      status: 'paid',
+      // Queue for upstream push to Kommon School — same initial state the
+      // Razorpay flow sets inside settlePayment(). Flipped to SUCCESS /
+      // FAILED / DEAD_LETTER by the worker after the POST resolves.
+      external_sync_status: 'PENDING',
+    };
+    // Include internal_plan + course so the webhook builder (buildPayload in
+    // enrollmentWebhook.service.js) can pull the per-entity Sumago overrides
+    // (sumagoPlanCode / sumagoGroup / sumagoUnit / sumagoPhase / sumagoSegment)
+    // from the freshly-written row instead of falling back to env-only defaults.
+    const enrollmentInclude = { internal_plan: { include: { course: true } } };
+
     enrollment = await tx.enrollment.create({
-      data: {
-        first_name, last_name,
-        email: data.email,
-        phone_number: data.phone,
-        name: data.name.trim(),
-        enrollment_code: enrollmentCode,
-        user_role: data.role || null,
-        education: data.education || null,
-        readiness: data.readiness || null,
-        source: data.source || null,
-        candidate_type: 'INTERNAL',
-        plan: null, group: null, unit: null, phase: null, segment: null,
-        amount: finalAmountPaise,           // legacy column kept in sync with final
-        promo_code: couponCode,             // legacy column
-        // First-class snapshot columns:
-        internal_plan_id:        planSnapshot.id,
-        base_price_paise:        basePricePaise,
-        discount_amount_paise:   discountAmountPaise,
-        final_amount_paise:      finalAmountPaise,
-        amount_paid_paise:       amountPaidPaiseInitial,
-        coupon_code_snapshot:    couponCode,
-        coupon_snapshot:         persistedCouponSnapshot,
-        internal_payment_status: internalPaymentStatus,
-        // Lifecycle: admin record is settled at creation
-        status: 'paid',
-        // Queue for upstream push to Kommon School — same initial state the
-        // Razorpay flow sets inside settlePayment(). Flipped to SUCCESS /
-        // FAILED / DEAD_LETTER by the worker after the POST resolves.
-        external_sync_status: 'PENDING',
-      },
-      include: {
-        // Include internal_plan + course so the webhook builder
-        // (buildPayload in enrollmentWebhook.service.js) can pull the
-        // per-entity Sumago overrides (sumagoPlanCode / sumagoGroup /
-        // sumagoUnit / sumagoPhase / sumagoSegment) from the freshly-
-        // created row instead of falling back to env-only defaults.
-        internal_plan: { include: { course: true } },
-      },
+      data: { ...enrollmentData, enrollment_code: enrollmentCode },
+      include: enrollmentInclude,
     });
 
     // ---- Payment row — only when there's actually money to collect ----

@@ -3,6 +3,7 @@
 const enrollmentService = require('./enrollment.service');
 const paymentService = require('../payments/payment.service');
 const { fireEnrollmentWebhook } = require('./enrollmentWebhook.service');
+const { onboardNewEnrollment } = require('./enrollmentOnboarding.service');
 const { sendSuccess } = require('../../utils/ApiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const ApiError = require('../../utils/ApiError');
@@ -17,6 +18,24 @@ const create = asyncHandler(async (req, res) => {
     req.body,
     req.traceId,
   );
+
+  // After a successful data submission — whether it created a brand-new
+  // enrollment OR resumed/updated an existing one for a returning email —
+  // provision a student login account and send the onboarding email with their
+  // credentials. onboardNewEnrollment is idempotent and non-throwing: it skips
+  // when an account already exists for the email (so no duplicate emails), and
+  // only provisions + emails when the student has none yet. Running it on the
+  // resumed path too means returning students (and any case where a prior send
+  // failed) still receive their login email. Awaited so the account exists
+  // before we respond; the email itself is fired non-blocking inside the
+  // service. Best-effort — never fails enrollment.
+  //
+  // The remaining case (created=false && resumed=false) is the 5-minute
+  // double-submit dedup hit, whose original submission already onboarded — so
+  // we skip it here to avoid redundant work.
+  if (created || resumed) {
+    await onboardNewEnrollment({ enrollment, traceId: req.traceId });
+  }
 
   // Build response that satisfies both:
   //   - Legacy callers: all snake_case fields
@@ -54,6 +73,52 @@ const getById = asyncHandler(async (req, res) => {
 const list = asyncHandler(async (req, res) => {
   const { rows, meta } = await enrollmentService.listEnrollments(req.query, req.traceId);
   sendSuccess(res, HTTP.OK, rows, undefined, meta);
+});
+
+/**
+ * POST /api/v1/enrollments/me  (authenticated)
+ *
+ * Self-service: the logged-in student starts a new plan purchase. Creates (or
+ * reuses) a fresh enrollment for their own email, identity auto-filled from
+ * their most recent enrollment. Returns the minimal fields the panel needs to
+ * drive plan selection + the Razorpay payment flow.
+ */
+const createMine = asyncHandler(async (req, res) => {
+  const { enrollment } = await enrollmentService.createSelfServiceEnrollment(
+    { email: req.user.email },
+    req.traceId,
+  );
+  sendSuccess(res, HTTP.CREATED, {
+    id:           enrollment.id,
+    enrollmentId: enrollment.enrollment_code || enrollment.id,
+    name:         enrollment.name || null,
+    email:        enrollment.email,
+    phone:        enrollment.phone_number || null,
+  }, 'Enrollment started');
+});
+
+/**
+ * POST /api/v1/enrollments/upgrade   (PUBLIC)
+ *
+ * Entry point for the shareable upgrade link "<host>/upgrade/<email>". The
+ * student opens it and lands straight on plan selection — no contact form.
+ * We create (or resume) a fresh draft enrollment for the email, auto-filling
+ * name/phone from their most recent enrollment (createSelfServiceEnrollment),
+ * then return the minimal fields the plan-selection + payment flow needs.
+ */
+const startUpgrade = asyncHandler(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const { enrollment } = await enrollmentService.createSelfServiceEnrollment(
+    { email },
+    req.traceId,
+  );
+  sendSuccess(res, HTTP.CREATED, {
+    id:           enrollment.id,
+    enrollmentId: enrollment.enrollment_code || enrollment.id,
+    name:         enrollment.name || null,
+    email:        enrollment.email,
+    phone:        enrollment.phone_number || null,
+  }, 'Upgrade enrollment ready');
 });
 
 // ---------------------------------------------------------------------------
@@ -157,6 +222,8 @@ const verifyPaymentForEnrollment = asyncHandler(async (req, res) => {
 
 module.exports = {
   create,
+  createMine,
+  startUpgrade,
   getById,
   list,
   createPaymentOrderForEnrollment,

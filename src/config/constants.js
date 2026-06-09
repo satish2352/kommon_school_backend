@@ -114,6 +114,10 @@ module.exports = Object.freeze({
     RAZORPAY_CONFIGS_MANAGE: 'razorpay_configs:manage',
     // Users
     USERS_MANAGE: 'users:manage',
+    // Email logs (view onboarding email log + resend student credentials).
+    // Decoupled from USERS_MANAGE so non-superadmin staff can use the page;
+    // the resend itself is server-guarded to student accounts only.
+    EMAIL_LOGS_MANAGE: 'email_logs:manage',
     // Reports
     REPORTS_VIEW: 'reports:view',
     // External API logs

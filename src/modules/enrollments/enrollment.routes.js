@@ -10,6 +10,7 @@ const {
   listEnrollmentQuerySchema,
   idParamSchema,
   verifyPaymentNestedSchema,
+  startUpgradeSchema,
 } = require('./enrollment.validator');
 const { PERMISSIONS } = require('../../config/constants');
 const planController = require('../plans/plan.controller');
@@ -26,6 +27,16 @@ const router = Router();
 
 // Student submits enrollment form (legacy snake_case or new camelCase shape)
 router.post('/', validate(createEnrollmentSchema), controller.create);
+
+// Public upgrade link entry — "<host>/upgrade/<email>" lands here. Creates/
+// resumes a draft enrollment for the email so the page can start at plan
+// selection. Declared before '/:id...' so 'upgrade' is never read as an id.
+router.post('/upgrade', validate(startUpgradeSchema), controller.startUpgrade);
+
+// Authenticated self-service: a logged-in student starts a NEW plan purchase
+// from their panel (identity auto-filled from their last enrollment). Declared
+// before '/:id...' routes so 'me' is never captured as an enrollment id.
+router.post('/me', authenticate, controller.createMine);
 
 // Phase 3A: create a Razorpay order for an enrollment (public marketing flow)
 router.post(

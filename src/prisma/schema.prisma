@@ -15,6 +15,9 @@ enum Role {
   superadmin
   admin
   marketing
+  // Public self-enrolled students. Holds NO admin permissions — can
+  // authenticate but is locked out of every admin-console route.
+  student
 }
 
 enum EnrollmentStatus {
@@ -44,6 +47,13 @@ enum PaymentStatus {
   cancelled
   expired
   refunded
+}
+
+// Outcome of an outbound transactional email send (onboarding, etc.).
+enum EmailStatus {
+  sent     // SMTP accepted the message
+  failed   // send attempt(s) errored
+  skipped  // not sent on purpose (mail disabled, or account already existed)
 }
 
 enum FollowupStatus {
@@ -391,23 +401,12 @@ model FollowupNote {
 model CourseMaster {
   id                  Int              @id @default(autoincrement())
   nameOfCourseAsGroup String           @map("name_of_course_as_group")
-  coupon              String?
   courseFee           Decimal          @map("course_fee") @db.Decimal(10, 2)
   description         String?          @db.Text
   status              CourseStatus     @default(ACTIVE)
   isSystemDefault     Boolean          @default(false) @map("is_system_default")
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
-
-  // ─── Sumago taxonomy overrides ────────────────────────────────────
-  // When set, these are sent in the provision-user webhook instead of
-  // the org-wide env-var defaults (SUMAGO_GROUP / SUMAGO_UNIT / etc.).
-  // Must match strings on Sumago's allowlist exactly — admin is
-  // responsible for entering values their Sumago config accepts.
-  sumagoGroup         String?          @map("sumago_group")   @db.VarChar(100)
-  sumagoUnit          String?          @map("sumago_unit")    @db.VarChar(100)
-  sumagoPhase         String?          @map("sumago_phase")   @db.VarChar(100)
-  sumagoSegment       String?          @map("sumago_segment") @db.VarChar(100)
 
   // FK: education master
   educationId         Int?             @map("education_id")
@@ -528,7 +527,11 @@ model Plan {
 model PlanPricing {
   id              Int        @id @default(autoincrement())
   planId          Int        @map("plan_id")
+  // Numeric duration value. Interpreted in `durationUnit` (DAYS or MONTHS).
+  // Column name kept as duration_months for migration continuity; it now holds
+  // the value in whichever unit the row uses.
   durationMonths  Int        @map("duration_months")
+  durationUnit    String     @default("MONTHS") @map("duration_unit") @db.VarChar(10)
   basePrice       Decimal    @map("base_price") @db.Decimal(10,2)
   discountPercent Decimal    @default(0) @map("discount_percent") @db.Decimal(5,2)
   finalPrice      Decimal    @map("final_price") @db.Decimal(10,2)
@@ -555,11 +558,6 @@ model InternalPlan {
   duration    InternalPlanDuration
   description String?              @db.Text
   status      InternalPlanStatus   @default(ACTIVE)
-
-  // Override for the Sumago `plan` field sent in the provision-user
-  // webhook. Falls back to SUMAGO_PLAN_CODE env var when null. Must
-  // match a plan code registered on Sumago for the organization.
-  sumagoPlanCode String?           @map("sumago_plan_code") @db.VarChar(100)
 
   // External integration Plan ID. Sent as `planId` in the Sumago provision-user
   // webhook payload (independent of the legacy `plan` field). Required on every
@@ -637,6 +635,35 @@ model SumagoUser {
   @@index([organizationCode, lastSyncedAt(sort: Desc)])
   @@index([tenantTokenHash])
   @@index([onboardingStatus])
+}
+
+// Audit trail of every transactional email the system attempts to send, so the
+// admin panel can show "who the mail went to" and offer a resend. Deliberately
+// FK-free (enrollment_id / user_id are plain columns): a log row must survive
+// even if the related enrollment is soft-deleted or no account exists yet
+// (skipped sends). The row is the historical record of an attempt.
+model EmailLog {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  to_email      String      @db.VarChar(255)
+  type          String      @default("onboarding") @db.VarChar(50)
+  status        EmailStatus
+  message_id    String?     @db.VarChar(255)
+  error         String?     @db.Text
+  subject       String?     @db.VarChar(255)
+  // Free-text reason for a skipped/failed row (e.g. "account already exists").
+  reason        String?     @db.VarChar(255)
+  enrollment_id String?     @db.Uuid
+  user_id       String?     @db.Uuid
+  trace_id      String?     @db.VarChar(64)
+  // Who triggered it: null = automatic (enrollment flow); set = admin resend.
+  triggered_by  String?     @db.VarChar(255)
+  created_at    DateTime    @default(now()) @db.Timestamptz
+
+  @@index([to_email])
+  @@index([created_at(sort: Desc)])
+  @@index([status])
+  @@index([type, created_at(sort: Desc)])
+  @@map("email_logs")
 }
 
 model RolePermission {

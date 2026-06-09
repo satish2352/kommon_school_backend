@@ -7,8 +7,9 @@
  * successful Razorpay payment verification. All calls are non-blocking — the
  * verify endpoint never waits for or fails on webhook errors.
  *
- * URL is configurable via ENROLLMENT_WEBHOOK_URL env var; falls back to the
- * default webhook.site endpoint.
+ * Destination is the Sumago provision-user endpoint when configured, else the
+ * legacy ENROLLMENT_WEBHOOK_URL. When neither is set the webhook is skipped
+ * (logged) rather than fired at any default.
  *
  * At fire-time, the service looks up the CourseMaster row associated with the
  * enrollment's promo code (using findActivePromoCodeWithRelations) and sources
@@ -29,21 +30,22 @@ const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.se
 // Destination resolution
 // ---------------------------------------------------------------------------
 // Priority order:
-//   1. SUMAGO_API_BASE_URL → POST <base>/integrations/provision-user with Bearer auth
+//   1. EXTERNAL_API_URL → POST <base>/integrations/provision-user with Bearer auth
 //   2. ENROLLMENT_WEBHOOK_URL → POST plain JSON, no auth (legacy)
-//   3. webhook.site fallback (dev/testing)
+//   3. null → no destination configured: the webhook is SKIPPED (logged), not
+//      fired. (Previously this fell back to a public webhook.site sink, which
+//      was removed so enrollment PII is never sent to a shared, public URL.)
 //
-// Sumago path is preferred when both vars are present, since SUMAGO_API_TOKEN
-// adds authentication that ENROLLMENT_WEBHOOK_URL never had.
+// The EXTERNAL_API_URL path is preferred when both vars are present, since
+// EXTERNAL_API_TOKEN adds authentication that ENROLLMENT_WEBHOOK_URL never had.
 // ---------------------------------------------------------------------------
-const SUMAGO_BASE  = (process.env.SUMAGO_API_BASE_URL || '').replace(/\/$/, '');
-const SUMAGO_TOKEN =  process.env.SUMAGO_API_TOKEN || '';
-const SUMAGO_ENABLED = Boolean(SUMAGO_BASE && SUMAGO_TOKEN);
+const EXTERNAL_BASE    = (process.env.EXTERNAL_API_URL || '').replace(/\/$/, '');
+const EXTERNAL_TOKEN   =  process.env.EXTERNAL_API_TOKEN || '';
+const EXTERNAL_ENABLED = Boolean(EXTERNAL_BASE && EXTERNAL_TOKEN);
 
-const WEBHOOK_URL = SUMAGO_ENABLED
-  ? `${SUMAGO_BASE}/integrations/provision-user`
-  : (process.env.ENROLLMENT_WEBHOOK_URL ||
-     'https://webhook.site/8012a95d-2521-4b64-b59f-1cbf3bd5e6e0');
+const WEBHOOK_URL = EXTERNAL_ENABLED
+  ? `${EXTERNAL_BASE}/integrations/provision-user`
+  : (process.env.ENROLLMENT_WEBHOOK_URL || null);
 
 // Per-delivery HTTP timeout in milliseconds.
 // Prevents a slow webhook target from hanging indefinitely.
@@ -88,16 +90,13 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     razorpayPaymentId ||
     `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // Sumago taxonomy — three-tier resolution per field:
-  //   1. Per-entity override if present (InternalPlan.sumagoPlanCode for
-  //      `plan`; CourseMaster.sumagoGroup/Unit/Phase/Segment for the
-  //      taxonomy quartet). These columns are admin-editable and let
-  //      different plans / courses map to different Sumago entries.
-  //   2. Env-var default (SUMAGO_PLAN_CODE / SUMAGO_GROUP / ...). Useful
-  //      as the "house style" fallback so every plan/course doesn't need
-  //      its overrides set explicitly.
-  //   3. Hardcoded sane defaults so the payload is never null even when
-  //      neither override nor env is set.
+  // Payload field resolution:
+  //   - `plan`  → per-plan externalPlanId (planId) when present, else a fixed
+  //               default code (see below).
+  //   - taxonomy (group/unit/phase/segment) → derived from the selected course
+  //               name + fixed defaults. Per-entity and env-var overrides
+  //               (SUMAGO_*) have been decommissioned.
+  // Hardcoded defaults guarantee the payload is never null.
   //
   // Override sources:
   //   - enrollment.internal_plan        → admin-internal flow (when the
@@ -123,38 +122,19 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
     || enrollment?.plan_pricing?.externalPlanId
     || null;
 
-  // `plan` resolution — three-tier:
-  //   1. Per-plan externalPlanId (new dynamic source — what admin wants today)
-  //   2. Legacy per-plan sumagoPlanCode override (kept for backward compat)
-  //   3. Env default → hardcoded fallback
-  const planCode =
-    planId
-    || internalPlan?.sumagoPlanCode
-    || process.env.SUMAGO_PLAN_CODE
-    || 'SUMAGOTEST_30';
+  // `plan` resolution — the per-plan externalPlanId (planId) is the live source.
+  // When an enrollment has no per-plan externalPlanId, fall back to a fixed
+  // default so the payload's `plan` field is never null. (The SUMAGO_PLAN_CODE
+  // env override and the per-plan sumagoPlanCode override have been removed.)
+  const planCode = planId || 'NOVA2025_30';
 
-  // `group` resolution — admin wants the selected Course's actual name
-  // ("Data Analytics Using Python", etc.) to flow through dynamically.
-  // Per-course sumagoGroup override stays as the highest-priority option so
-  // admins who explicitly mapped a course to a different Sumago entry still
-  // win, but the natural course name takes precedence over env defaults.
-  const group =
-    effectiveCourse?.sumagoGroup
-    || effectiveCourse?.nameOfCourseAsGroup
-    || process.env.SUMAGO_GROUP
-    || 'Full Stack Development Using Python';
-  const unit =
-    effectiveCourse?.sumagoUnit
-    || process.env.SUMAGO_UNIT
-    || '30 Days';
-  const phase =
-    effectiveCourse?.sumagoPhase
-    || process.env.SUMAGO_PHASE
-    || '';
-  const segment =
-    effectiveCourse?.sumagoSegment
-    || process.env.SUMAGO_SEGMENT
-    || '';
+  // Sumago taxonomy. Per-course overrides (sumagoGroup/Unit/Phase/Segment) and
+  // the SUMAGO_* taxonomy env defaults have been decommissioned: `group` flows
+  // from the selected course's name, and unit/phase/segment use fixed defaults.
+  const group = effectiveCourse?.nameOfCourseAsGroup || 'Full Stack Development Using Python';
+  const unit = '30 Days';
+  const phase = '';
+  const segment = '';
 
   let amountRupees;
   // Prefer the enrollment's snapshot final amount (admin-internal flow
@@ -212,6 +192,17 @@ function buildPayload({ enrollment, razorpayPaymentId, amount, course }) {
  * @returns {Promise<object|null>} persisted WebhookDelivery row, or null if persist failed
  */
 async function executeWebhookDelivery({ enrollment, payload, source = 'BACKEND', course = null }) {
+  // No destination configured (no Sumago + no ENROLLMENT_WEBHOOK_URL) → skip the
+  // delivery entirely instead of firing at any default URL. Non-fatal: the
+  // payment-verify response is unaffected.
+  if (!WEBHOOK_URL) {
+    logger.warn({
+      msg: 'enrollment_webhook_skipped_no_destination',
+      enrollment_id: enrollment?.enrollment_code || enrollment?.id || null,
+    });
+    return null;
+  }
+
   const startMs = Date.now();
   let response    = null;
   let responseBody = null;
@@ -224,8 +215,8 @@ async function executeWebhookDelivery({ enrollment, payload, source = 'BACKEND',
   // Build headers. Authorization is included only when Sumago is configured;
   // the legacy webhook target has no auth requirement.
   const fetchHeaders = { 'Content-Type': 'application/json' };
-  if (SUMAGO_ENABLED) {
-    fetchHeaders.Authorization = `Bearer ${SUMAGO_TOKEN}`;
+  if (EXTERNAL_ENABLED) {
+    fetchHeaders.Authorization = `Bearer ${EXTERNAL_TOKEN}`;
   }
 
   try {

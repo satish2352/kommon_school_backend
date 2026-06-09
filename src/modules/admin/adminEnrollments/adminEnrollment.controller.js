@@ -1,5 +1,6 @@
 'use strict';
 
+const { Prisma } = require('@prisma/client');
 const enrollmentService = require('../../enrollments/enrollment.service');
 const { getPrismaClient } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
@@ -244,6 +245,441 @@ const getById = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/admin/enrollments/internal-grouped
+ *
+ * One row PER EMAIL for admin-internal enrollments — the most recent enrollment
+ * for each email, plus `enrollmentCount` (how many internal enrollments that
+ * email has). Powers the Internal Enrollments page, where each student appears
+ * once and a row/email click drills into the full per-email history.
+ *
+ * Server-side grouping (DISTINCT ON via window functions) so dedup is global,
+ * not per-page. Supports the same fromDate/toDate filters and pagination as the
+ * flat list. Pagination is over distinct emails.
+ */
+const internalGrouped = asyncHandler(async (req, res) => {
+  const db = getPrismaClient();
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+
+  const from = req.query.fromDate ? new Date(req.query.fromDate) : null;
+  const to   = req.query.toDate   ? new Date(req.query.toDate)   : null;
+
+  const conds = [
+    Prisma.sql`deleted_at IS NULL`,
+    Prisma.sql`candidate_type = 'INTERNAL'`,
+  ];
+  if (from && !Number.isNaN(from.getTime())) conds.push(Prisma.sql`created_at >= ${from}`);
+  if (to   && !Number.isNaN(to.getTime()))   conds.push(Prisma.sql`created_at <= ${to}`);
+  const where = Prisma.join(conds, ' AND ');
+
+  const rows = await db.$queryRaw`
+    WITH internal AS (
+      SELECT * FROM "enrollments" WHERE ${where}
+    ), ranked AS (
+      SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY lower(email) ORDER BY created_at DESC) AS rn,
+        COUNT(*)     OVER (PARTITION BY lower(email))::int AS email_count
+      FROM internal
+    )
+    SELECT id, enrollment_code, name, first_name, last_name, email, phone_number,
+           status, internal_payment_status, internal_plan_id, candidate_type,
+           created_at, updated_at, email_count
+    FROM ranked
+    WHERE rn = 1
+    ORDER BY created_at DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+
+  const totalRows = await db.$queryRaw`
+    SELECT COUNT(DISTINCT lower(email))::int AS total
+    FROM "enrollments" WHERE ${where}
+  `;
+  const total = totalRows?.[0]?.total ?? 0;
+
+  const items = rows.map((r) => ({
+    id:           r.id,
+    enrollmentId: r.enrollment_code || r.id,
+    fullName:
+      r.name ||
+      [`${r.first_name || ''}`.trim(), `${r.last_name || ''}`.trim()]
+        .filter(Boolean).join(' ') || null,
+    email:                 r.email,
+    phone:                 r.phone_number || null,
+    status:                mapEnrollmentStatus(r.status),
+    internalPaymentStatus: r.internal_payment_status ?? null,
+    internalPlanId:        r.internal_plan_id ?? null,
+    candidateType:         r.candidate_type || 'INTERNAL',
+    enrollmentCount:       r.email_count ?? 1,
+    createdAt:             r.created_at,
+    updatedAt:             r.updated_at,
+  }));
+
+  sendSuccess(res, HTTP.OK, {
+    items,
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+  });
+});
+
+/**
+ * GET /api/v1/admin/enrollments/grouped
+ *
+ * One row PER EMAIL across ALL enrollments (internal + external) — the most
+ * recent enrollment for each email plus `enrollmentCount`. Mirrors the flat
+ * list's filters (search / candidateType / status / externalSyncStatus /
+ * date range) and item shape (incl. the lastSync diagnostic) so the
+ * Enrollments page can render its Sync column and Retry button against the
+ * representative (latest) row. Filters apply BEFORE grouping, so the "latest"
+ * row is the latest one matching the filter. Pagination is over distinct emails.
+ */
+const groupedByEmail = asyncHandler(async (req, res) => {
+  const db = getPrismaClient();
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+
+  const conds = [Prisma.sql`deleted_at IS NULL`];
+
+  const search = String(req.query.search || '').trim();
+  if (search) {
+    const like = `%${search}%`;
+    conds.push(Prisma.sql`(name ILIKE ${like} OR email ILIKE ${like} OR phone_number ILIKE ${like} OR first_name ILIKE ${like} OR last_name ILIKE ${like})`);
+  }
+  const ctype = req.query.candidateType;
+  if (ctype === 'INTERNAL' || ctype === 'EXTERNAL') {
+    conds.push(Prisma.sql`candidate_type::text = ${ctype}`);
+  }
+  if (req.query.status) {
+    conds.push(Prisma.sql`status::text = ${String(req.query.status)}`);
+  }
+  if (req.query.externalSyncStatus) {
+    conds.push(Prisma.sql`external_sync_status::text = ${String(req.query.externalSyncStatus)}`);
+  }
+  const from = req.query.fromDate ? new Date(req.query.fromDate) : null;
+  const to   = req.query.toDate   ? new Date(req.query.toDate)   : null;
+  if (from && !Number.isNaN(from.getTime())) conds.push(Prisma.sql`created_at >= ${from}`);
+  if (to   && !Number.isNaN(to.getTime()))   conds.push(Prisma.sql`created_at <= ${to}`);
+  const where = Prisma.join(conds, ' AND ');
+
+  const rows = await db.$queryRaw`
+    WITH filtered AS (
+      SELECT * FROM "enrollments" WHERE ${where}
+    ), ranked AS (
+      SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY lower(email) ORDER BY created_at DESC) AS rn,
+        COUNT(*)     OVER (PARTITION BY lower(email))::int AS email_count
+      FROM filtered
+    )
+    SELECT * FROM ranked WHERE rn = 1
+    ORDER BY created_at DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+  const totalRows = await db.$queryRaw`
+    SELECT COUNT(DISTINCT lower(email))::int AS total FROM "enrollments" WHERE ${where}
+  `;
+  const total = totalRows?.[0]?.total ?? 0;
+
+  // Enrich each representative row with its latest external_api_log (Sync col).
+  const ids = rows.map((r) => r.id);
+  const logByEnrollment = new Map();
+  if (ids.length > 0) {
+    const logs = await db.externalApiLog.findMany({
+      where:   { enrollment_id: { in: ids } },
+      orderBy: { created_at: 'desc' },
+      select: {
+        enrollment_id: true, status: true, attempts: true, last_error: true,
+        status_code: true, endpoint: true, created_at: true, updated_at: true,
+      },
+    });
+    for (const log of logs) {
+      if (!logByEnrollment.has(log.enrollment_id)) logByEnrollment.set(log.enrollment_id, log);
+    }
+  }
+
+  // Active plan per email = the student's LATEST PAID enrollment's plan. Drives
+  // the "Active Plan" column on the Enrollments page (Plan ID + days left).
+  // Resolved independently of the representative row, which may be an unpaid
+  // draft (e.g. an upgrade just started).
+  const activeByEmail = new Map();
+  const emailsForActive = rows.map((r) => r.email).filter(Boolean);
+  if (emailsForActive.length > 0) {
+    const paidRows = await db.enrollment.findMany({
+      where: {
+        email:      { in: emailsForActive },
+        deleted_at: null,
+        status:     { in: ACTIVE_PLAN_STATUSES },
+      },
+      orderBy: { created_at: 'desc' },
+      include: {
+        plan_pricing:  { include: { plan: true } },
+        internal_plan: { select: { name: true, duration: true, externalPlanId: true } },
+        payments:      { select: { status: true, created_at: true } },
+      },
+    });
+    for (const pr of paidRows) {
+      const key = String(pr.email).toLowerCase();
+      if (activeByEmail.has(key)) continue; // first hit = latest (orderBy desc)
+      const win = computePlanWindow(pr);
+      activeByEmail.set(key, {
+        externalPlanId: pr.internal_plan?.externalPlanId || pr.plan_pricing?.externalPlanId || null,
+        planLabel:      pr.internal_plan?.name || pr.plan_pricing?.plan?.name || null,
+        daysLeft:       win.daysLeft,
+        planExpiryAt:   win.planExpiryAt,
+      });
+    }
+  }
+
+  const items = rows.map((r) => {
+    const log = logByEnrollment.get(r.id) || null;
+    return {
+      id:           r.id,
+      enrollmentId: r.enrollment_code || r.id,
+      fullName:
+        r.name ||
+        [`${r.first_name || ''}`.trim(), `${r.last_name || ''}`.trim()]
+          .filter(Boolean).join(' ') || null,
+      firstName:     r.first_name || null,
+      lastName:      r.last_name  || null,
+      email:         r.email,
+      phone:         r.phone_number || null,
+      role:          r.user_role || null,
+      education:     r.education || null,
+      readiness:     r.readiness || null,
+      source:        r.source || null,
+      candidateType: r.candidate_type || 'EXTERNAL',
+      status:        mapEnrollmentStatus(r.status),
+      createdAt:     r.created_at,
+      updatedAt:     r.updated_at,
+      internalPlanId:        r.internal_plan_id ?? null,
+      internalPaymentStatus: r.internal_payment_status ?? null,
+      externalSyncStatus:    r.external_sync_status ?? null,
+      enrollmentCount:       r.email_count ?? 1,
+      // Latest-paid plan for this student (Plan ID + remaining days). Null when
+      // the student has no paid plan yet.
+      activePlan: activeByEmail.get(String(r.email).toLowerCase()) || null,
+      lastSync: log
+        ? {
+            logStatus:   log.status,
+            attempts:    log.attempts,
+            error:       log.last_error,
+            statusCode:  log.status_code,
+            endpoint:    log.endpoint,
+            attemptedAt: log.updated_at || log.created_at,
+          }
+        : null,
+    };
+  });
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  sendSuccess(res, HTTP.OK, {
+    items, total, page, limit, totalPages,
+    hasNext: page < totalPages,
+    hasPrev: page > 1,
+  });
+});
+
+// Statuses for which a plan is considered "active" — i.e. the student has paid
+// and a validity window should be computed. Unpaid / terminal rows have no
+// running plan and therefore no days-left.
+const ACTIVE_PLAN_STATUSES = ['paid', 'completed', 'sync_pending'];
+
+// Prisma surfaces the InternalPlanDuration enum by its JS identifier
+// (ONE_MONTH, …) regardless of the @map DB value ('1_MONTH', …). Map both
+// forms to a whole number of months so callers don't care which they get.
+const INTERNAL_DURATION_MONTHS = {
+  ONE_MONTH: 1, THREE_MONTHS: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12,
+  '1_MONTH': 1, '3_MONTHS': 3, '6_MONTHS': 6, '12_MONTHS': 12,
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Resolve an enrollment's plan validity window.
+ *
+ * Start = the most recent successful payment date (the moment the plan was
+ * actually paid for), falling back to updated_at (when the row was settled)
+ * then created_at. End = start + duration, computed with real calendar math
+ * (month-aware, not 30-day approximation). daysLeft is ceil()-ed so a plan
+ * that ends later today still reads as "1 day left", and goes negative once
+ * expired.
+ *
+ * Returns all-null when the enrollment isn't on an active (paid) plan or the
+ * plan has no resolvable duration — the frontend renders "—" in that case.
+ *
+ * @param {object} e — enrollment row with plan_pricing + internal_plan + payments
+ * @returns {{ durationLabel: string|null, planStartAt: Date|null, planExpiryAt: Date|null, daysLeft: number|null }}
+ */
+function computePlanWindow(e) {
+  const empty = { durationLabel: null, planStartAt: null, planExpiryAt: null, daysLeft: null };
+  if (!ACTIVE_PLAN_STATUSES.includes(e.status)) return empty;
+
+  // Resolve duration value + unit from whichever plan type this row carries.
+  let value = null;
+  let unit = 'MONTHS';
+  if (e.internal_plan?.duration != null) {
+    value = INTERNAL_DURATION_MONTHS[e.internal_plan.duration] ?? null;
+    unit = 'MONTHS';
+  } else if (e.plan_pricing?.durationMonths != null) {
+    value = Number(e.plan_pricing.durationMonths);
+    unit = String(e.plan_pricing.durationUnit || 'MONTHS').toUpperCase() === 'DAYS' ? 'DAYS' : 'MONTHS';
+  }
+  if (value == null || !Number.isFinite(value) || value <= 0) return empty;
+
+  // Start = latest successful payment, else settlement/creation timestamp.
+  const successPayments = (e.payments || []).filter((p) => p.status === 'success' && p.created_at);
+  const latestPaymentAt = successPayments.length
+    ? successPayments.reduce((max, p) => (p.created_at > max ? p.created_at : max), successPayments[0].created_at)
+    : null;
+  const startAt = new Date(latestPaymentAt || e.updated_at || e.created_at);
+
+  const expiry = new Date(startAt);
+  if (unit === 'DAYS') expiry.setUTCDate(expiry.getUTCDate() + value);
+  else expiry.setUTCMonth(expiry.getUTCMonth() + value);
+
+  const daysLeft = Math.ceil((expiry.getTime() - Date.now()) / MS_PER_DAY);
+  const durationLabel = unit === 'DAYS'
+    ? `${value} day${value === 1 ? '' : 's'}`
+    : `${value} month${value === 1 ? '' : 's'}`;
+
+  return { durationLabel, planStartAt: startAt, planExpiryAt: expiry, daysLeft };
+}
+
+/**
+ * GET /api/v1/admin/enrollments/by-email?email=...
+ *
+ * Returns every (non-deleted) enrollment that shares an email, newest first,
+ * as a compact history list. Powers the grouped-by-email history surfaces:
+ * the detail drawer's "other enrollments", the grouped list rows, the
+ * dedicated student-history page, and the plan-enrollments page.
+ *
+ * Case-insensitive match on email. Each item carries a plan label, status,
+ * amount, timestamps, and the plan validity window (planStartAt /
+ * planExpiryAt / daysLeft) so the frontend can show "days left on plan"
+ * without an extra fetch per row.
+ */
+const historyByEmail = asyncHandler(async (req, res) => {
+  const email = String(req.query.email || '').trim();
+  if (!email) throw ApiError.badRequest('email query parameter is required');
+
+  const db = getPrismaClient();
+
+  // Server-side pagination. Defaults: page 1, 10 rows; limit capped at 100.
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+  const skip  = (page - 1) * limit;
+
+  const where = { email: { equals: email, mode: 'insensitive' }, deleted_at: null };
+  const include = {
+    plan_pricing:  { include: { plan: true } },
+    internal_plan: { select: { id: true, name: true, duration: true, externalPlanId: true } },
+    payments:      { select: { amount: true, status: true, created_at: true } },
+  };
+
+  const [total, rows] = await Promise.all([
+    db.enrollment.count({ where }),
+    db.enrollment.findMany({
+      where,
+      orderBy: { created_at: 'desc' },
+      skip,
+      take: limit,
+      include,
+    }),
+  ]);
+
+  const items = rows.map((e) => {
+    // Plan label: internal plan name, else external plan name + duration.
+    let planLabel = e.internal_plan?.name || null;
+    if (!planLabel && e.plan_pricing?.plan?.name) {
+      const months = e.plan_pricing.durationMonths;
+      const unit = String(e.plan_pricing.durationUnit || 'MONTHS').toUpperCase() === 'DAYS' ? 'days' : 'mo';
+      planLabel = months != null
+        ? `${e.plan_pricing.plan.name} · ${months} ${unit}`
+        : e.plan_pricing.plan.name;
+    }
+    const paidPaise = (e.payments || [])
+      .filter((p) => p.status === 'success')
+      .reduce((s, p) => s + (p.amount || 0), 0);
+
+    const { durationLabel, planStartAt, planExpiryAt, daysLeft } = computePlanWindow(e);
+
+    return {
+      id:            e.id,
+      enrollmentId:  e.enrollment_code || e.id,
+      fullName:
+        e.name ||
+        [`${e.first_name || ''}`.trim(), `${e.last_name || ''}`.trim()]
+          .filter(Boolean).join(' ') || null,
+      email:         e.email,
+      phone:         e.phone_number || null,
+      status:        mapEnrollmentStatus(e.status),
+      candidateType: e.candidate_type || 'EXTERNAL',
+      source:        e.source || null,
+      planLabel,
+      // Plan ID = the external_plan_id of the plan the student bought (the
+      // "Plan ID" column on the plan-details page). Identifies the exact plan.
+      externalPlanId: e.internal_plan?.externalPlanId || e.plan_pricing?.externalPlanId || null,
+      amountPaise:     e.final_amount_paise ?? e.amount ?? null,
+      // Prefer the sum of SUCCESSFUL payments (public/upgrade flow records the
+      // money there, leaving amount_paid_paise at its 0 default); fall back to
+      // the internal-flow snapshot column when no success payment row exists.
+      amountPaidPaise: paidPaise > 0 ? paidPaise : (e.amount_paid_paise ?? null),
+      // Plan validity window — null for unpaid / no-duration rows.
+      durationLabel,
+      planStartAt,
+      planExpiryAt,
+      daysLeft,
+      createdAt:     e.created_at,
+      updatedAt:     e.updated_at,
+    };
+  });
+
+  // Current active plan — the most recent active-plan enrollment for this email,
+  // resolved INDEPENDENTLY of the current page so the "Current Plan / days left"
+  // summary card stays correct even when the admin is on page 2+.
+  const currentRow = await db.enrollment.findFirst({
+    where: { ...where, status: { in: ACTIVE_PLAN_STATUSES } },
+    orderBy: { created_at: 'desc' },
+    include,
+  });
+  let currentPlan = null;
+  if (currentRow) {
+    const win = computePlanWindow(currentRow);
+    if (win.daysLeft != null) {
+      let planLabel = currentRow.internal_plan?.name || null;
+      if (!planLabel && currentRow.plan_pricing?.plan?.name) {
+        const months = currentRow.plan_pricing.durationMonths;
+        const unit = String(currentRow.plan_pricing.durationUnit || 'MONTHS').toUpperCase() === 'DAYS' ? 'days' : 'mo';
+        planLabel = months != null
+          ? `${currentRow.plan_pricing.plan.name} · ${months} ${unit}`
+          : currentRow.plan_pricing.plan.name;
+      }
+      currentPlan = {
+        enrollmentId: currentRow.enrollment_code || currentRow.id,
+        externalPlanId: currentRow.internal_plan?.externalPlanId || currentRow.plan_pricing?.externalPlanId || null,
+        planLabel,
+        ...win,
+      };
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  sendSuccess(res, HTTP.OK, {
+    email,
+    items,
+    total,
+    page,
+    limit,
+    totalPages,
+    hasNext: page < totalPages,
+    hasPrev: page > 1,
+    currentPlan,
+  });
+});
+
+/**
  * POST /api/v1/admin/enrollments/:id/retry-sync
  *
  * Re-queue the external-API sync job for an enrollment whose
@@ -327,4 +763,4 @@ const retrySync = asyncHandler(async (req, res) => {
   }, 'Retry queued');
 });
 
-module.exports = { list, getById, retrySync };
+module.exports = { list, getById, internalGrouped, groupedByEmail, historyByEmail, retrySync };

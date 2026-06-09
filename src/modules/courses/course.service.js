@@ -194,17 +194,10 @@ async function createCourse(body, traceId) {
     courseNameId,
     nameOfCourseAsGroup,
     courseFee:   body.courseFee,
-    coupon:      body.coupon || null,
     description: body.description || null,
     status:      body.status || 'ACTIVE',
     educationId: body.educationId ?? null,
     durationId:  body.durationId ?? null,
-    // Sumago taxonomy overrides — empty string is normalised to null so
-    // the buildPayload check (`?? env-default`) doesn't pick "" as truthy.
-    sumagoGroup:   body.sumagoGroup?.trim()   || null,
-    sumagoUnit:    body.sumagoUnit?.trim()    || null,
-    sumagoPhase:   body.sumagoPhase?.trim()   || null,
-    sumagoSegment: body.sumagoSegment?.trim() || null,
   };
 
   let course;
@@ -267,17 +260,10 @@ async function updateCourse(id, body, traceId) {
   }
 
   if (body.courseFee   !== undefined) data.courseFee   = body.courseFee;
-  if (body.coupon      !== undefined) data.coupon      = body.coupon || null;
   if (body.description !== undefined) data.description = body.description || null;
   if (body.status      !== undefined) data.status      = body.status;
   if (body.educationId !== undefined) data.educationId = body.educationId ?? null;
   if (body.durationId  !== undefined) data.durationId  = body.durationId ?? null;
-  // Sumago taxonomy overrides — explicit empty/null clears the saved
-  // value so the row falls back to env defaults at provision time.
-  if (body.sumagoGroup   !== undefined) data.sumagoGroup   = body.sumagoGroup?.trim()   || null;
-  if (body.sumagoUnit    !== undefined) data.sumagoUnit    = body.sumagoUnit?.trim()    || null;
-  if (body.sumagoPhase   !== undefined) data.sumagoPhase   = body.sumagoPhase?.trim()   || null;
-  if (body.sumagoSegment !== undefined) data.sumagoSegment = body.sumagoSegment?.trim() || null;
 
   let course;
   try {

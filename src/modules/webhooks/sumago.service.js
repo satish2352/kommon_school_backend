@@ -7,8 +7,8 @@
  * Holds the Bearer token in process env — never exposes it to the browser.
  *
  * Env vars (validated in config/env.js):
- *   SUMAGO_API_BASE_URL — e.g. https://beta.kommonschool.com/v1/api
- *   SUMAGO_API_TOKEN    — org-specific bearer token
+ *   EXTERNAL_API_URL   — integration API base, e.g. https://beta.kommonschool.com/v1/api
+ *   EXTERNAL_API_TOKEN — org-specific bearer token
  *
  * Per documentation:
  *   GET <base>/integrations/get-users
@@ -25,8 +25,8 @@ const SUMAGO_REQUEST_TIMEOUT_MS =
   parseInt(process.env.SUMAGO_REQUEST_TIMEOUT_MS, 10) || 15000;
 
 function getConfig() {
-  const base  = (process.env.SUMAGO_API_BASE_URL || '').replace(/\/$/, '');
-  const token =  process.env.SUMAGO_API_TOKEN || '';
+  const base  = (process.env.EXTERNAL_API_URL || '').replace(/\/$/, '');
+  const token =  process.env.EXTERNAL_API_TOKEN || '';
   return { base, token, enabled: Boolean(base && token) };
 }
 
@@ -44,7 +44,7 @@ async function fetchUsers(traceId) {
     throw new ApiError(
       503,
       'SUMAGO_NOT_CONFIGURED',
-      'Sumago integration is not configured. Set SUMAGO_API_BASE_URL and SUMAGO_API_TOKEN in the backend env.',
+      'Sumago integration is not configured. Set EXTERNAL_API_URL and EXTERNAL_API_TOKEN in the backend env.',
     );
   }
 

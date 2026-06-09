@@ -151,6 +151,118 @@ async function getMe(userId) {
 }
 
 /**
+ * Build the self-service account overview for the logged-in user's personal
+ * panel: their own profile plus their own transaction history (planHistory).
+ *
+ * Strictly self-scoped — we resolve the user from their access token (userId),
+ * read their email, and only ever return the Sumago mirror row that matches
+ * that email. This is the server-side guarantee behind user-wise data
+ * segregation: a user can never see another user's transactions, regardless of
+ * what the client requests.
+ *
+ * Provisioned users whose Sumago mirror row hasn't synced yet simply get an
+ * empty transaction list and a sparse profile (email/role/memberSince only).
+ *
+ * @param {string} userId
+ * @returns {Promise<{ profile: object, transactions: object[] }>}
+ */
+async function getAccountOverview(userId) {
+  const user = await repo.findUserById(userId);
+  if (!user) throw ApiError.notFound('User not found');
+
+  const sumago = await repo.findSumagoUserByEmail(user.email);
+
+  const profile = {
+    email:            user.email,
+    role:             user.role,
+    memberSince:      user.created_at,
+    firstName:        sumago?.firstName ?? null,
+    lastName:         sumago?.lastName ?? null,
+    phoneNumber:      sumago?.phoneNumber ?? null,
+    plan:             sumago?.plan ?? null,
+    group:            sumago?.groupName ?? null,
+    unit:             sumago?.unit ?? null,
+    phase:            sumago?.phase ?? null,
+    segment:          sumago?.segment ?? null,
+    emailStatus:      sumago?.emailStatus ?? null,
+    onboardingStatus: sumago?.onboardingStatus ?? null,
+  };
+
+  // Transactions come from two sources, merged:
+  //   1. Sumago-synced planHistory (authoritative once the get-users sync runs).
+  //   2. LOCAL Payment / paid-enrollment records — so a completed payment shows
+  //      immediately, without waiting for the Sumago round-trip (which may lag
+  //      or be unreachable). Deduped by transactionId, preferring the Sumago
+  //      entry when the same transaction exists in both.
+  const planHistory = Array.isArray(sumago?.planHistory) ? sumago.planHistory : [];
+  const localTransactions = await buildLocalTransactions(user.email);
+
+  const seenTxnIds = new Set(
+    planHistory.map((t) => t?.transactionId).filter(Boolean),
+  );
+  const merged = [
+    ...planHistory,
+    ...localTransactions.filter((t) => !t.transactionId || !seenTxnIds.has(t.transactionId)),
+  ];
+
+  // Newest first. Entries carry an ISO `paymentDate`; entries with a
+  // missing/invalid date sort to the bottom rather than throwing.
+  const transactions = merged.sort(
+    (a, b) => (Date.parse(b?.paymentDate) || 0) - (Date.parse(a?.paymentDate) || 0),
+  );
+
+  return { profile, transactions };
+}
+
+const PAID_ENROLLMENT_STATUSES = ['paid', 'sync_pending', 'completed'];
+
+/**
+ * Build transaction rows from LOCAL enrollment/payment records for an email,
+ * matching the planHistory shape { paymentDate, amount, plan, transactionId }.
+ *
+ *   - One row per SUCCESSFUL Payment (amount/100 → whole rupees, txn id from the
+ *     Razorpay payment/order id).
+ *   - For a paid enrollment with NO successful payment (admin-created or
+ *     fully-discounted), one row from the enrollment's snapshot amount.
+ *
+ * @param {string} email
+ * @returns {Promise<Array<{paymentDate:string, amount:number, plan:string|null, transactionId:string, source:'local'}>>}
+ */
+async function buildLocalTransactions(email) {
+  const enrollments = await repo.findEnrollmentsWithPaymentsByEmail(email);
+  const toIso = (d) => (d instanceof Date ? d.toISOString() : (d || null));
+  const rows = [];
+
+  for (const e of enrollments) {
+    const planName = e.internal_plan?.name || e.plan_pricing?.plan?.name || e.plan || null;
+    const successPayments = (e.payments || []).filter((p) => p.status === 'success');
+
+    if (successPayments.length > 0) {
+      for (const p of successPayments) {
+        rows.push({
+          paymentDate:   toIso(p.created_at) || toIso(e.created_at),
+          amount:        Math.round((p.amount || 0) / 100),
+          plan:          planName,
+          transactionId: p.razorpay_payment_id || p.razorpay_order_id || e.enrollment_code || e.id,
+          source:        'local',
+        });
+      }
+    } else if (PAID_ENROLLMENT_STATUSES.includes(e.status)) {
+      const amountPaise = e.final_amount_paise != null ? e.final_amount_paise : (e.amount || 0);
+      rows.push({
+        paymentDate:   toIso(e.updated_at) || toIso(e.created_at),
+        amount:        Math.round(amountPaise / 100),
+        plan:          planName,
+        transactionId: e.enrollment_code || e.id,
+        source:        'local',
+      });
+    }
+  }
+
+  return rows;
+}
+
+/**
  * Change the authenticated user's password.
  *
  * Verifies `currentPassword` against the stored bcrypt hash, rejects if:
@@ -212,4 +324,4 @@ function maskEmail(email) {
   return `${local[0]}***@${domain}`;
 }
 
-module.exports = { login, refresh, logout, getMe, changePassword };
+module.exports = { login, refresh, logout, getMe, getAccountOverview, changePassword };

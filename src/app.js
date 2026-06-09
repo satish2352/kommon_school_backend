@@ -27,6 +27,7 @@ const adminRazorpayConfigRoutes = require('./modules/admin/razorpayConfigs/razor
 const adminExternalApiLogRoutes = require('./modules/admin/externalApiLogs/externalApiLog.routes');
 const reportsRoutes = require('./modules/reports/reports.routes');
 const adminDashboardRoutes = require('./modules/admin/dashboard/dashboard.routes');
+const adminEmailLogRoutes = require('./modules/admin/emailLogs/emailLog.routes');
 const adminEnrollmentRoutes = require('./modules/admin/adminEnrollments/adminEnrollment.routes');
 const adminPaymentRoutes = require('./modules/admin/adminPayments/adminPayment.routes');
 const adminFollowupsReportRoutes = require('./modules/admin/adminFollowupsReport/adminFollowupsReport.routes');
@@ -119,6 +120,7 @@ app.use('/api/v1/admin/external-api-logs', adminExternalApiLogRoutes);
 app.use('/api/v1/audit-logs', auditRoutes);
 app.use('/api/v1/reports', reportsRoutes);
 app.use('/api/v1/admin/dashboard', adminDashboardRoutes);
+app.use('/api/v1/admin/email-logs', adminEmailLogRoutes);
 // Admin enrollment manual + bulk routes (new F1 module) — mounted BEFORE the list route
 // so /manual, /bulk, /csv-template are resolved first.
 app.use('/api/v1/admin/enrollments', adminEnrollmentManualRoutes);

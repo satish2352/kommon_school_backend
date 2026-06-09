@@ -11,16 +11,10 @@ const createCourseSchema = Joi.object({
   // Legacy / convenience path: provide the name as a string; service upserts it
   nameOfCourseAsGroup: Joi.string().trim().min(2).max(200).optional(),
   courseFee:           Joi.number().min(0).max(9999999.99).precision(2).required(),
-  coupon:              Joi.string().trim().uppercase().max(50).optional().allow('', null),
   description:         Joi.string().max(2000).optional().allow('', null),
   status:              Joi.string().valid('ACTIVE', 'INACTIVE').optional(),
   educationId:         Joi.number().integer().positive().optional().allow(null),
   durationId:          Joi.number().integer().positive().optional().allow(null),
-  // Sumago taxonomy overrides — see schema.prisma comments on CourseMaster.
-  sumagoGroup:         Joi.string().trim().max(100).optional().allow('', null),
-  sumagoUnit:          Joi.string().trim().max(100).optional().allow('', null),
-  sumagoPhase:         Joi.string().trim().max(100).optional().allow('', null),
-  sumagoSegment:       Joi.string().trim().max(100).optional().allow('', null),
   isSystemDefault:     Joi.forbidden(),
 })
 // At least one of courseNameId / nameOfCourseAsGroup must be present
@@ -33,16 +27,10 @@ const updateCourseSchema = Joi.object({
   courseNameId:        Joi.number().integer().positive().optional(),
   nameOfCourseAsGroup: Joi.string().trim().min(2).max(200).optional(),
   courseFee:           Joi.number().min(0).max(9999999.99).precision(2).optional(),
-  coupon:              Joi.string().trim().uppercase().max(50).optional().allow('', null),
   description:         Joi.string().max(2000).optional().allow('', null),
   status:              Joi.string().valid('ACTIVE', 'INACTIVE').optional(),
   educationId:         Joi.number().integer().positive().optional().allow(null),
   durationId:          Joi.number().integer().positive().optional().allow(null),
-  // Sumago taxonomy overrides — explicit null clears any saved override.
-  sumagoGroup:         Joi.string().trim().max(100).optional().allow('', null),
-  sumagoUnit:          Joi.string().trim().max(100).optional().allow('', null),
-  sumagoPhase:         Joi.string().trim().max(100).optional().allow('', null),
-  sumagoSegment:       Joi.string().trim().max(100).optional().allow('', null),
   isSystemDefault:     Joi.forbidden(),
 }).min(1); // at least one field must be provided
 

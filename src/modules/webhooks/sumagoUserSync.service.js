@@ -65,7 +65,7 @@ function computeContentHash(payload) {
 }
 
 function tokenHash() {
-  const tok = process.env.SUMAGO_API_TOKEN || '';
+  const tok = process.env.EXTERNAL_API_TOKEN || '';
   if (!tok) return null;
   return crypto.createHash('sha256').update(tok).digest('hex');
 }
@@ -103,9 +103,12 @@ const INTERNAL_DURATION_LABEL = {
 function fmtInternalDuration(enumVal) {
   return INTERNAL_DURATION_LABEL[enumVal] || (enumVal || null);
 }
-function fmtPublicDuration(n) {
+function fmtPublicDuration(n, unit = 'MONTHS') {
   const num = Number(n);
   if (!Number.isFinite(num) || num <= 0) return null;
+  if (String(unit).toUpperCase() === 'DAYS') {
+    return num === 1 ? '1 Day' : `${num} Days`;
+  }
   return num === 1 ? '1 Month' : `${num} Months`;
 }
 function buildLocalPlan(e) {
@@ -120,7 +123,7 @@ function buildLocalPlan(e) {
   if (e?.plan_pricing) {
     return {
       name:       e.plan_pricing.plan?.name || null,
-      duration:   fmtPublicDuration(e.plan_pricing.durationMonths),
+      duration:   fmtPublicDuration(e.plan_pricing.durationMonths, e.plan_pricing.durationUnit),
       courseName: null,
       source:     'EXTERNAL',
     };
@@ -477,6 +480,7 @@ async function listFromDb(opts, traceId) {
       plan_pricing: {
         select: {
           durationMonths: true,
+          durationUnit:   true,
           plan: { select: { name: true } },
         },
       },

@@ -37,25 +37,36 @@ const envSchema = Joi.object({
 
   REDIS_URL: Joi.string().uri().required(),
 
+  // Integration API — single source of truth for the Kommon School / Sumago
+  // platform integration. EXTERNAL_API_URL is the BASE url; the code derives
+  // <base>/integrations/provision-user (POST, enrollment sync) and
+  // <base>/integrations/get-users (GET, admin proxy) from it. EXTERNAL_API_TOKEN
+  // is the Bearer token for both. (Formerly split across SUMAGO_API_BASE_URL /
+  // SUMAGO_API_TOKEN, now consolidated.)
   EXTERNAL_API_URL: Joi.string().uri().required(),
   EXTERNAL_API_TOKEN: Joi.string().required(),
   EXTERNAL_API_TIMEOUT_MS: Joi.number().integer().min(1000).default(15000),
 
-  // Sumago Platform Integration API — when set, the enrollment webhook fires
-  // to <SUMAGO_API_BASE_URL>/integrations/provision-user with a Bearer token
-  // and the admin /webhooks/sumago-users proxy becomes available.
-  // Both are optional so dev environments without Sumago credentials still boot.
-  SUMAGO_API_BASE_URL: Joi.string().uri().optional().allow(''),
-  SUMAGO_API_TOKEN:    Joi.string().optional().allow(''),
-  // Fixed taxonomy values sent in every webhook payload. Case-sensitive —
-  // Sumago expects these exact strings. Defaults match the current Sumago config.
-  SUMAGO_PLAN_CODE: Joi.string().optional().default('NOVA2025_30'),
-  SUMAGO_GROUP:     Joi.string().optional().default('Engineering - UG'),
-  SUMAGO_UNIT:      Joi.string().optional().default('B.Tech CSE'),
-  SUMAGO_PHASE:     Joi.string().optional().default('Semester 1'),
-  SUMAGO_SEGMENT:   Joi.string().optional().default('A'),
-
   CORS_ALLOWED_ORIGINS: Joi.string().default('http://localhost:3000'),
+
+  // ---------------------------------------------------------------------------
+  // EMAIL / SMTP — onboarding email sent to newly enrolled students.
+  // MAIL_ENABLED gates the whole feature so dev environments without SMTP
+  // credentials still boot and enroll (the send is skipped + logged, never
+  // throws). When enabled, SMTP_HOST/PORT/USER/PASS + MAIL_FROM are required.
+  // ---------------------------------------------------------------------------
+  MAIL_ENABLED: Joi.boolean().truthy('true', '1').falsy('false', '0').default(false),
+  SMTP_HOST: Joi.string().when('MAIL_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional().allow('') }),
+  SMTP_PORT: Joi.number().integer().min(1).max(65535).default(465),
+  // SMTP_SECURE=true → implicit TLS (port 465). false → STARTTLS (port 587).
+  SMTP_SECURE: Joi.boolean().truthy('true', '1').falsy('false', '0').default(true),
+  SMTP_USER: Joi.string().when('MAIL_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional().allow('') }),
+  SMTP_PASS: Joi.string().when('MAIL_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional().allow('') }),
+  // From header. Falls back to SMTP_USER when blank. Supports "Name <addr>" form.
+  MAIL_FROM: Joi.string().optional().allow(''),
+  // Public login URL embedded in the onboarding email + the page the student
+  // signs in on. Must match the deployed frontend origin.
+  FRONTEND_LOGIN_URL: Joi.string().uri().default('http://localhost:5173/login'),
 
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly').default('info'),
   LOG_DIR: Joi.string().default('logs'),

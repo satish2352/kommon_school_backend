@@ -160,6 +160,21 @@ const idParamSchema = Joi.object({
 });
 
 // ---------------------------------------------------------------------------
+// Start-upgrade schema — public /enrollments/upgrade. Only an email is needed;
+// identity is auto-filled server-side from the student's prior enrollment.
+// ---------------------------------------------------------------------------
+const startUpgradeSchema = Joi.object({
+  email: Joi.string()
+    .email()
+    .lowercase()
+    .trim()
+    .max(255)
+    .pattern(EMAIL_REGEX)
+    .required()
+    .messages({ 'string.pattern.base': 'email must be a valid email address' }),
+});
+
+// ---------------------------------------------------------------------------
 // Nested payment-verify schema — camelCase from frontend
 // ---------------------------------------------------------------------------
 const verifyPaymentNestedSchema = Joi.object({
@@ -174,4 +189,5 @@ module.exports = {
   listEnrollmentQuerySchema,
   idParamSchema,
   verifyPaymentNestedSchema,
+  startUpgradeSchema,
 };

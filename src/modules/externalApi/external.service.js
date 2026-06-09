@@ -12,34 +12,30 @@ const { EXTERNAL_API_DEFAULTS, DEFAULT_PHONE_COUNTRY_CODE } = require('../../con
 const EXTERNAL_API_URL = process.env.EXTERNAL_API_URL;
 const EXTERNAL_API_TIMEOUT_MS = Number(process.env.EXTERNAL_API_TIMEOUT_MS) || 15000;
 
+// EXTERNAL_API_URL is the integration API base; the enrollment-sync POST target
+// is <base>/integrations/provision-user (same endpoint the public payment-verify
+// webhook fires to).
+const PROVISION_USER_URL = `${(EXTERNAL_API_URL || '').replace(/\/+$/, '')}/integrations/provision-user`;
+
 /**
  * Resolve the effective Bearer token for outgoing sync requests.
  *
  * Priority:
- *   1. EXTERNAL_API_TOKEN  — explicit token specific to the external-API
- *      pipeline. Treated as unset when it's empty OR still holds the
- *      .env placeholder string ("REPLACE_ME_..."). Without this guard,
- *      first-run installs were literally sending the placeholder to
- *      Sumago as a Bearer token and getting 401-rejected.
- *   2. SUMAGO_API_TOKEN    — the token used by the Sumago Platform
- *      Integration API. Already configured for the GET /get-users
- *      proxy, so reusing it lets the POST /provision-user path
- *      authenticate without a second env var.
- *   3. null                — no token available. callExternalApi
- *      omits the Authorization header entirely (rather than sending
- *      "Bearer undefined" which is worse than sending nothing).
+ *   1. EXTERNAL_API_TOKEN  — the integration API bearer token. Treated as unset
+ *      when it's empty OR still holds the .env placeholder string
+ *      ("REPLACE_ME_..."). Without this guard, first-run installs were literally
+ *      sending the placeholder as a Bearer token and getting 401-rejected.
+ *   2. null                — no token available. callExternalApi omits the
+ *      Authorization header entirely (rather than sending "Bearer undefined"
+ *      which is worse than sending nothing).
  *
- * Re-read on every call (instead of caching at module load) so an
- * operator rotating tokens via .env + restart sees the new value
- * without code changes.
+ * Re-read on every call (instead of caching at module load) so an operator
+ * rotating the token via .env + restart sees the new value without code changes.
  */
 function getEffectiveAuthToken() {
   const raw = (process.env.EXTERNAL_API_TOKEN || '').trim();
   const isPlaceholder = !raw || /^REPLACE_ME/i.test(raw);
   if (!isPlaceholder) return { token: raw, source: 'EXTERNAL_API_TOKEN' };
-
-  const sumago = (process.env.SUMAGO_API_TOKEN || '').trim();
-  if (sumago) return { token: sumago, source: 'SUMAGO_API_TOKEN' };
 
   return { token: null, source: 'none' };
 }
@@ -181,7 +177,6 @@ function buildRequestBody(enrollment, payment) {
   }
 
   // planId — per-(plan, duration) identifier stored on plan_pricing.external_plan_id.
-  // Independent of `plan` (env-default `SUMAGO_PLAN_CODE`) which stays untouched.
   // The relation is loaded by both syncEnrollmentInBackground and the BullMQ
   // worker; if it ever arrives unloaded (e.g. a legacy caller), we send null
   // rather than fabricating a value — the receiving system can decide.
@@ -254,7 +249,7 @@ async function syncEnrollmentInBackground({ enrollmentId, paymentId, traceId }) 
  * @throws Re-throws when BullMQ should retry (non-terminal errors).
  */
 async function syncEnrollment({ enrollment, payment, traceId }) {
-  const endpoint = EXTERNAL_API_URL;
+  const endpoint = PROVISION_USER_URL;
   const requestBody = buildRequestBody(enrollment, payment);
 
   // Find or create the log row (idempotent)

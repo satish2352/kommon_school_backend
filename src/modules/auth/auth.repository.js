@@ -37,6 +37,57 @@ async function findUserById(id) {
  * @param {string} id - user UUID
  * @returns {Promise<{ id: string, email: string, password_hash: string } | null>}
  */
+/**
+ * Find the Sumago mirror row for a user by email. This is where a provisioned
+ * end-user's profile fields and `planHistory` (their transaction history) live —
+ * the auth `users` table and `sumago_users` table are linked by email only.
+ *
+ * Email is stored lowercased in sumago_users (see sumagoUserSync.mapToRow), so
+ * we lowercase the lookup key to match.
+ *
+ * @param {string} email
+ * @returns {Promise<object|null>}
+ */
+async function findSumagoUserByEmail(email) {
+  return getDb().sumagoUser.findFirst({
+    where: { email: String(email || '').trim().toLowerCase() },
+    select: {
+      firstName: true,
+      lastName: true,
+      phoneNumber: true,
+      plan: true,
+      groupName: true,
+      unit: true,
+      phase: true,
+      segment: true,
+      emailStatus: true,
+      onboardingStatus: true,
+      planHistory: true,
+    },
+  });
+}
+
+/**
+ * Find all (non-deleted) enrollments for an email, with their payments and plan
+ * relations, so the panel can build transaction rows from LOCAL records rather
+ * than depending solely on the Sumago-synced planHistory. Case-insensitive
+ * match (emails are stored lowercased on new rows).
+ *
+ * @param {string} email
+ * @returns {Promise<object[]>}
+ */
+async function findEnrollmentsWithPaymentsByEmail(email) {
+  return getDb().enrollment.findMany({
+    where: { email: { equals: String(email || '').trim(), mode: 'insensitive' }, deleted_at: null },
+    include: {
+      payments:      true,
+      plan_pricing:  { include: { plan: true } },
+      internal_plan: { select: { name: true } },
+    },
+    orderBy: { created_at: 'desc' },
+  });
+}
+
 async function findUserWithHashById(id) {
   return getDb().user.findFirst({
     where: { id, deleted_at: null },
@@ -102,6 +153,8 @@ async function revokeFamilyTokens(familyId) {
 module.exports = {
   findUserByEmail,
   findUserById,
+  findSumagoUserByEmail,
+  findEnrollmentsWithPaymentsByEmail,
   findUserWithHashById,
   updatePassword,
   createRefreshToken,

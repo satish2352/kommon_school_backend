@@ -128,6 +128,7 @@ async function sendTestWebhook(sample, traceId) {
   const syntheticPlanPricing = samplePlanSelection
     ? {
         durationMonths:  samplePlanSelection.durationMonths  ?? 1,
+        durationUnit:    samplePlanSelection.durationUnit     ?? 'MONTHS',
         basePrice:       samplePlanSelection.basePrice       ?? 0,
         discountPercent: samplePlanSelection.discountPercent ?? 0,
         finalPrice:      samplePlanSelection.finalPrice      ?? 0,

@@ -79,14 +79,13 @@ function maskEmail(email) {
 //      active enrollment for the same email. The row lock serializes parallel
 //      submissions for the same email (multi-tab, double-click, retries from
 //      different devices) so they always converge on a single record.
-//   3. If an existing row was found:
-//        a. If it is in a paid state (or has any successful Payment row),
-//           throw STUDENT_ALREADY_REGISTERED (409). Successful enrollments
-//           are immutable from the public flow.
-//        b. Otherwise, UPDATE that row with the new form data and return it
-//           as a "resumed" enrollment. The plan_pricing_id stays as-is so
-//           the user can pick up where they left off; status is reset to
-//           'submitted' only if it was a terminal failure state.
+//   3. If an existing row was found, UPDATE its personal details with the new
+//      form data and return it as a "resumed" enrollment so the student moves
+//      straight on to plan selection — regardless of its prior state. Status is
+//      preserved except failed/expired, which reset to 'submitted'. A paid row
+//      keeps its paid status: the student can update details and reach plan
+//      selection, but selectForEnrollment refuses any plan change / re-charge
+//      on a paid enrollment (no double-charge). See RESUME_RESET_STATUSES.
 //   4. If no existing row was found, INSERT a new one. The partial unique
 //      index `uniq_enrollments_email_active` makes this race-safe: if two
 //      transactions both saw nothing and both try to INSERT, the loser hits
@@ -97,11 +96,27 @@ function maskEmail(email) {
 // so a crash mid-request can't leave a half-created enrollment behind.
 // ---------------------------------------------------------------------------
 
-// Status values that mean "this enrollment is locked-in successfully paid"
-// and must never be mutated by the public flow. Mirrors the constant in the
-// repository so any future status added in one place is caught in code review
-// against the other.
-const PAID_ENROLLMENT_STATUSES = repo.PAID_ENROLLMENT_STATUSES;
+// Public re-enrollment is an in-place upsert by email. A student returning with
+// an email that already has an enrollment — incomplete OR already paid — has
+// that SAME row's personal details updated and is sent forward to plan
+// selection. There is only ever one active row per email
+// (uniq_enrollments_email_active is a unique index on lower(email) WHERE
+// deleted_at IS NULL), so we always reuse it rather than create a second.
+//
+// Status policy when reusing the row:
+//   submitted / payment_pending → keep (mid-flow; preserves plan_pricing_id)
+//   failed / expired            → reset to 'submitted' so the student can walk
+//                                 the flow cleanly (these never paid)
+//   paid / completed /          → KEEP as-is. The returning student's details
+//   sync_pending                  are updated and they reach the plan-selection
+//                                 page, but their paid plan stands: the
+//                                 selectForEnrollment guard refuses any plan
+//                                 change / re-charge on a paid enrollment, so
+//                                 we must NOT reset a settled record's status.
+const RESUME_RESET_STATUSES = ['failed', 'expired'];
+function nextStatusOnResume(currentStatus) {
+  return RESUME_RESET_STATUSES.includes(currentStatus) ? 'submitted' : currentStatus;
+}
 
 /**
  * Build the data dict for the new-shape create path. Pure function — no DB.
@@ -219,64 +234,36 @@ async function createEnrollment(body, traceId) {
       const existing = await repo.findActiveByEmailForUpdate(tx, email);
 
       if (existing) {
-        // 2a) Successful enrollment → immutable. Block re-enrollment with a
-        // friendly, distinct error code so the UI can render the right copy.
-        if (PAID_ENROLLMENT_STATUSES.includes(existing.status)) {
-          logger.warn({
-            msg: 'enrollment_blocked_already_paid_status',
+        // An external student who already has a SETTLED enrollment is directed
+        // to their student panel to purchase a plan — we do NOT let them
+        // re-enroll (and overwrite their settled record) from the public
+        // website, since they already have a login + panel. Incomplete drafts
+        // (submitted / payment_pending / failed / expired) still resume below.
+        const alreadySettled =
+          repo.PAID_ENROLLMENT_STATUSES.includes(existing.status) ||
+          (await tx.payment.count({
+            where: { enrollment_id: existing.id, status: 'success' },
+          })) > 0;
+        if (alreadySettled) {
+          logger.info({
+            msg: 'enrollment_already_settled_login_required',
             traceId,
-            existing_enrollment_id: existing.id,
-            existing_status: existing.status,
+            enrollment_id: existing.id,
             email: maskEmail(email),
           });
           throw new ApiError(
             409,
-            ERROR_CODES.STUDENT_ALREADY_REGISTERED,
-            'A student is already registered with this email.',
+            'ENROLLMENT_ALREADY_EXISTS',
+            'This enrollment already exists. Please log in to your student panel to purchase a plan.',
           );
         }
 
-        // 2b) Belt-and-suspenders: a successful Payment row trumps any drift
-        // on the enrollment.status column. Reconcile status forward if we
-        // find one, then block — this case should not normally arise but if
-        // it does, the safe behaviour is "treat as paid".
-        const paidAlready = await repo.hasSuccessfulPayment(tx, existing.id);
-        if (paidAlready) {
-          if (existing.status !== 'paid' && existing.status !== 'completed') {
-            await tx.enrollment.update({
-              where: { id: existing.id },
-              data: { status: 'paid' },
-            });
-          }
-          logger.warn({
-            msg: 'enrollment_blocked_payment_success_row_exists',
-            traceId,
-            existing_enrollment_id: existing.id,
-            existing_status: existing.status,
-            email: maskEmail(email),
-          });
-          throw new ApiError(
-            409,
-            ERROR_CODES.STUDENT_ALREADY_REGISTERED,
-            'A student is already registered with this email.',
-          );
-        }
-
-        // 2c) Resume — update the existing incomplete row with the freshly
-        // submitted form data so the rest of the flow uses the latest input.
-        //
-        // Status policy on resume:
-        //   submitted              → leave alone (still on step 1, no plan yet)
-        //   payment_pending        → leave alone (preserves plan_pricing_id so
-        //                            user keeps the prior plan unless they
-        //                            re-select; selectForEnrollment will
-        //                            cancel any stale orders on re-pick)
-        //   failed / expired       → reset to 'submitted' so the user can
-        //                            walk the flow cleanly from scratch
-        const nextStatus =
-          existing.status === 'failed' || existing.status === 'expired'
-            ? 'submitted'
-            : existing.status;
+        // Resume / re-enroll — update the existing row (whatever its current
+        // state) with the freshly submitted form data and send the student on
+        // to plan selection. See RESUME_RESET_STATUSES above for the status
+        // policy: terminal/paid states reset to 'submitted' so the flow can be
+        // walked cleanly again; mid-flow states are preserved.
+        const nextStatus = nextStatusOnResume(existing.status);
 
         const updated = await tx.enrollment.update({
           where: { id: existing.id },
@@ -324,29 +311,17 @@ async function createEnrollment(body, traceId) {
             // the caller sees the genuine error.
             throw e;
           }
-          if (PAID_ENROLLMENT_STATUSES.includes(retry.status)) {
-            throw new ApiError(
-              409,
-              ERROR_CODES.STUDENT_ALREADY_REGISTERED,
-              'A student is already registered with this email.',
-            );
-          }
-          const paidNow = await repo.hasSuccessfulPayment(tx, retry.id);
-          if (paidNow) {
-            throw new ApiError(
-              409,
-              ERROR_CODES.STUDENT_ALREADY_REGISTERED,
-              'A student is already registered with this email.',
-            );
-          }
+          const nextStatus = nextStatusOnResume(retry.status);
           const updated = await tx.enrollment.update({
             where: { id: retry.id },
-            data: baseData,
+            data: { ...baseData, status: nextStatus },
           });
           logger.info({
             msg: 'enrollment_resumed_after_unique_race',
             traceId,
             enrollment_id: updated.id,
+            previous_status: retry.status,
+            next_status: nextStatus,
             email: maskEmail(email),
           });
           return { enrollment: updated, created: false, resumed: true };
@@ -468,4 +443,90 @@ async function listEnrollments(query, traceId) {
   return { rows, meta: buildMeta(page, limit, total) };
 }
 
-module.exports = { createEnrollment, getEnrollmentById, listEnrollments };
+// ---------------------------------------------------------------------------
+// createSelfServiceEnrollment — logged-in student purchasing a new plan
+// ---------------------------------------------------------------------------
+//
+// Authenticated panel purchase flow. A returning student is blocked from the
+// public POST /enrollments (they're routed to the panel), so this is how they
+// start a new purchase. Identity comes from the token (email); name/phone are
+// auto-filled from their most recent enrollment.
+//
+// One in-progress draft per email is allowed (DB unique index), so we REUSE an
+// existing submitted/payment_pending draft if present (reset to a clean
+// submitted state) rather than insert a second one. Paid history rows are never
+// touched. The returned enrollment is then driven through the existing
+// selectForEnrollment + payment-order + payment-verify endpoints unchanged.
+async function createSelfServiceEnrollment({ email }, traceId) {
+  const db = getPrismaClient();
+  const emailLower = String(email || '').trim().toLowerCase();
+  if (!emailLower) throw ApiError.badRequest('Authenticated user has no email');
+
+  // Auto-fill identity from the student's most recent enrollment.
+  const prior = await db.enrollment.findFirst({
+    where: { email: { equals: emailLower, mode: 'insensitive' }, deleted_at: null },
+    orderBy: { created_at: 'desc' },
+    select: {
+      name: true, first_name: true, last_name: true, phone_number: true,
+      user_role: true, education: true, readiness: true, source: true,
+    },
+  });
+  const fullName =
+    prior?.name ||
+    [prior?.first_name, prior?.last_name].filter(Boolean).join(' ') ||
+    emailLower.split('@')[0];
+  const { first_name, last_name } = splitName(fullName);
+
+  const baseData = {
+    name:         fullName,
+    first_name,
+    last_name,
+    phone_number: prior?.phone_number || null,
+    user_role:    prior?.user_role || null,
+    education:    prior?.education || null,
+    readiness:    prior?.readiness || null,
+    source:       prior?.source || null,
+    status:       'submitted',
+    plan_pricing_id: null,
+    candidate_type: 'EXTERNAL',
+  };
+
+  const result = await db.$transaction(async (tx) => {
+    // Reuse an existing in-progress draft if any (one-draft-per-email index).
+    const rows = await tx.$queryRaw`
+      SELECT id FROM "enrollments"
+      WHERE lower(email) = lower(${emailLower}) AND deleted_at IS NULL
+        AND status IN ('submitted', 'payment_pending')
+      ORDER BY created_at DESC LIMIT 1
+      FOR UPDATE
+    `;
+    const draftId = rows && rows[0] ? rows[0].id : null;
+    if (draftId) {
+      return tx.enrollment.update({ where: { id: draftId }, data: baseData });
+    }
+    return tx.enrollment.create({
+      data: {
+        ...baseData,
+        email: emailLower,
+        enrollment_code: generateEnrollmentCode(),
+        amount: DEFAULT_ENROLLMENT_AMOUNT_PAISE,
+      },
+    });
+  }, { timeout: 15000, maxWait: 5000 });
+
+  logger.info({
+    msg: 'self_service_enrollment_created',
+    traceId,
+    enrollment_id: result.id,
+    email: maskEmail(emailLower),
+  });
+
+  return { enrollment: result };
+}
+
+module.exports = {
+  createEnrollment,
+  getEnrollmentById,
+  listEnrollments,
+  createSelfServiceEnrollment,
+};

@@ -78,7 +78,7 @@ endpoint list above is deferred to Phase 2:
 
 - BullMQ + Redis queues / workers
 - node-cron jobs (reconciliation, cleanup, follow-up reminders, etc.)
-- External API sync (`webhook.site` callout) and its retry pipeline
+- External API sync (Sumago `provision-user` callout) and its retry pipeline
 - Marketing follow-up module
 - Reports module + CSV export
 - Razorpay multi-config CRUD/switch endpoints (a single config is seeded from env)
@@ -107,7 +107,7 @@ Phase 2 can extend without migration churn.
 | Variable | Default | Purpose |
 |---|---|---|
 | `REDIS_URL` | `redis://localhost:6379` | ioredis connection URL. Use `rediss://` for TLS. Required. |
-| `EXTERNAL_API_URL` | `https://webhook.site/8012a95d-2521-4b64-b59f-1cbf3bd5e6e0` | Target endpoint for enrollment sync POST. Required. |
+| `EXTERNAL_API_URL` | `https://<your-domain>/v1/api/integrations/provision-user` | Target endpoint for enrollment sync POST. Required (valid URL). |
 | `EXTERNAL_API_TOKEN` | — | Bearer token sent in `Authorization` header. Required. |
 | `EXTERNAL_API_TIMEOUT_MS` | `15000` | Per-call HTTP timeout in milliseconds (min 1000). |
 

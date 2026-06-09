@@ -29,6 +29,18 @@ const me = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/auth/me/account
+ *
+ * Self-service account overview for the logged-in user's personal panel:
+ * { profile, transactions }. Strictly scoped to req.user — a user only ever
+ * sees their own profile and their own transaction history.
+ */
+const accountOverview = asyncHandler(async (req, res) => {
+  const result = await authService.getAccountOverview(req.user.id);
+  sendSuccess(res, HTTP.OK, result);
+});
+
+/**
  * POST /api/v1/auth/change-password
  *
  * Requires a valid access token (authenticate middleware).
@@ -60,4 +72,4 @@ const changePassword = asyncHandler(async (req, res) => {
   sendSuccess(res, HTTP.OK, result, 'Password changed successfully');
 });
 
-module.exports = { login, refresh, logout, me, changePassword };
+module.exports = { login, refresh, logout, me, accountOverview, changePassword };

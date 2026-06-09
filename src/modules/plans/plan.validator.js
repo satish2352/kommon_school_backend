@@ -2,8 +2,28 @@
 
 const Joi = require('joi');
 
-// Valid duration months set
-const VALID_DURATION_MONTHS = [1, 3, 6, 12];
+// Duration value + unit. Previously limited to a fixed 1/3/6/12 month set; now
+// admin can define any positive integer duration in DAYS or MONTHS per pricing
+// row. The value is capped generously (10 years' worth of days) to guard against
+// typos; the frontend applies tighter per-unit limits. Uniqueness of
+// (planId, durationMonths) is still enforced by the DB @@unique index.
+const MIN_DURATION_VALUE = 1;
+const MAX_DURATION_VALUE = 3650;
+const VALID_DURATION_UNITS = ['DAYS', 'MONTHS'];
+const durationMonthsSchema = Joi.number()
+  .integer()
+  .min(MIN_DURATION_VALUE)
+  .max(MAX_DURATION_VALUE)
+  .messages({
+    'number.base': 'Duration must be a number',
+    'number.min':  `Duration must be at least ${MIN_DURATION_VALUE}`,
+    'number.max':  `Duration must be at most ${MAX_DURATION_VALUE}`,
+  });
+const durationUnitSchema = Joi.string()
+  .valid(...VALID_DURATION_UNITS)
+  .default('MONTHS')
+  .messages({ 'any.only': 'Duration unit must be DAYS or MONTHS' });
+
 const VALID_TIERS = ['SILVER', 'GOLD', 'PLATINUM'];
 
 // External integration Plan ID format: 1–100 chars, ASCII letters/digits/_/-.
@@ -26,7 +46,8 @@ const externalPlanIdSchema = Joi.string()
 // Pricing sub-schema (used inside createPlanSchema pricings array)
 // ---------------------------------------------------------------------------
 const pricingSchema = Joi.object({
-  durationMonths:  Joi.number().integer().valid(...VALID_DURATION_MONTHS).required(),
+  durationMonths:  durationMonthsSchema.required(),
+  durationUnit:    durationUnitSchema,
   basePrice:       Joi.number().min(0).max(999999.99).precision(2).required(),
   discountPercent: Joi.number().min(0).max(100).precision(2).optional().default(0),
   // finalPrice is computed server-side; client value is ignored if provided
@@ -80,6 +101,7 @@ const setStatusSchema = Joi.object({
 // Upsert pricing schema
 // ---------------------------------------------------------------------------
 const upsertPricingSchema = Joi.object({
+  durationUnit:    durationUnitSchema,
   basePrice:       Joi.number().min(0).max(999999.99).precision(2).required(),
   discountPercent: Joi.number().min(0).max(100).precision(2).optional().default(0),
   // finalPrice is computed server-side; client value is ignored if provided
@@ -114,7 +136,7 @@ const planPricingParamSchema = Joi.object({
 
 const planDurationParamSchema = Joi.object({
   planId:         Joi.number().integer().min(1).required(),
-  durationMonths: Joi.number().integer().valid(...VALID_DURATION_MONTHS).required(),
+  durationMonths: durationMonthsSchema.required(),
 });
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ const PERMISSION_DESCRIPTIONS = {
   [PERMISSIONS.FOLLOWUPS_MANAGE]: 'Add notes, update status, and trigger payment retries on followups',
   [PERMISSIONS.RAZORPAY_CONFIGS_MANAGE]: 'Create, update, and activate Razorpay gateway configurations',
   [PERMISSIONS.USERS_MANAGE]: 'Create, update, and delete admin users',
+  [PERMISSIONS.EMAIL_LOGS_MANAGE]: 'View the onboarding email log and resend student credentials',
   [PERMISSIONS.REPORTS_VIEW]: 'View reporting dashboards and export data',
   [PERMISSIONS.EXTERNAL_API_LOGS_VIEW]: 'View external API sync log entries',
   [PERMISSIONS.AUDIT_LOGS_VIEW]: 'View the system audit log',
@@ -72,6 +73,7 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.ENROLLMENTS_BULK_UPLOAD,
     PERMISSIONS.INTERNAL_PLANS_VIEW,
     PERMISSIONS.INTERNAL_PLANS_MANAGE,
+    PERMISSIONS.EMAIL_LOGS_MANAGE,
   ],
   marketing: [
     PERMISSIONS.FOLLOWUPS_VIEW,
