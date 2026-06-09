@@ -40,6 +40,11 @@ const PERMISSION_DESCRIPTIONS = {
   [PERMISSIONS.ENROLLMENTS_BULK_UPLOAD]:   'Upload a CSV to bulk-create enrollments',
   [PERMISSIONS.INTERNAL_PLANS_VIEW]:   'View internal plans and their coupon/fee details',
   [PERMISSIONS.INTERNAL_PLANS_MANAGE]: 'Create, update, and delete internal plans',
+  // Employee follow-up portal — Phase 1 foundation.
+  [PERMISSIONS.LEADS_VIEW_OWN]:  'View only the leads (enrollments) assigned to the requesting user',
+  [PERMISSIONS.LEADS_VIEW_ALL]:  'View every lead regardless of assignment (admin)',
+  [PERMISSIONS.LEADS_ASSIGN]:    'Assign an unassigned lead to a follow-up employee',
+  [PERMISSIONS.LEADS_REASSIGN]:  'Reassign a lead from one follow-up employee to another',
 };
 
 // ---------------------------------------------------------------------------
@@ -74,6 +79,12 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.INTERNAL_PLANS_VIEW,
     PERMISSIONS.INTERNAL_PLANS_MANAGE,
     PERMISSIONS.EMAIL_LOGS_MANAGE,
+    // Admin can see all leads regardless of assignee + assign/reassign them
+    // to follow-up employees. They do NOT get LEADS_VIEW_OWN — admin always
+    // sees everything via LEADS_VIEW_ALL.
+    PERMISSIONS.LEADS_VIEW_ALL,
+    PERMISSIONS.LEADS_ASSIGN,
+    PERMISSIONS.LEADS_REASSIGN,
   ],
   marketing: [
     PERMISSIONS.FOLLOWUPS_VIEW,
@@ -82,6 +93,24 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.ENROLLMENTS_VIEW,
     PERMISSIONS.PLANS_READ,
     PERMISSIONS.PLANS_ENROLLMENTS_READ,
+  ],
+  // Employee follow-up portal role. Strictly scoped — sees ONLY the
+  // enrollments / followups assigned to them (LEADS_VIEW_OWN). Can
+  // manage followup activity on their assigned leads (FOLLOWUPS_VIEW +
+  // FOLLOWUPS_MANAGE — combined with own-scoping enforced in the service
+  // layer). Has PAYMENTS_RETRY so they can trigger a payment-link resend
+  // for their own leads.
+  //
+  // Explicitly NOT granted: LEADS_VIEW_ALL, LEADS_ASSIGN, LEADS_REASSIGN
+  // (those are admin-only). Granting any of them effectively turns an
+  // employee into an admin.
+  employee: [
+    PERMISSIONS.LEADS_VIEW_OWN,
+    PERMISSIONS.FOLLOWUPS_VIEW,
+    PERMISSIONS.FOLLOWUPS_MANAGE,
+    PERMISSIONS.PAYMENTS_RETRY,
+    PERMISSIONS.ENROLLMENTS_VIEW,
+    PERMISSIONS.PLANS_READ,
   ],
 };
 

@@ -148,5 +148,25 @@ module.exports = Object.freeze({
     // Internal Plans
     INTERNAL_PLANS_VIEW:   'internal_plans:view',
     INTERNAL_PLANS_MANAGE: 'internal_plans:manage',
+
+    // ---------------------------------------------------------------------
+    // Employee Follow-Up Portal (Phase 1 — foundation).
+    //
+    //   leads:view:own      — see only enrollments where assigned_to = req.user.id
+    //   leads:view:all      — see every enrollment regardless of assignment (admin)
+    //   leads:assign        — assign or reassign an enrollment to any employee
+    //   leads:reassign      — distinct from :assign so admins can grant "move
+    //                         leads between employees" without granting initial
+    //                         assignment privileges (rarely used; usually
+    //                         granted together)
+    //
+    // Owning the verb suffix `:own` is critical — the service layer reads
+    // this and short-circuits the WHERE clause to `assigned_to = $userId`.
+    // Granting `leads:view:all` to an employee role bypasses the isolation.
+    // ---------------------------------------------------------------------
+    LEADS_VIEW_OWN:  'leads:view:own',
+    LEADS_VIEW_ALL:  'leads:view:all',
+    LEADS_ASSIGN:    'leads:assign',
+    LEADS_REASSIGN:  'leads:reassign',
   },
 });
