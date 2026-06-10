@@ -91,6 +91,10 @@ const adminInternalEnrollmentSchema = Joi.object({
   internalPlanId:     Joi.number().integer().positive().required(),
   internalCouponCode: Joi.string().trim().uppercase().max(50).optional().allow(null, ''),
   notes:              Joi.string().max(500).optional().allow(null, ''),
+  // When present, the backend soft-deletes the named draft + its
+  // followup before creating the final paid enrollment - so the lead
+  // moves cleanly from "in progress" to "paid" with no duplicate rows.
+  draftEnrollmentId:  Joi.string().uuid().optional(),
 }).options({ stripUnknown: true });
 
 // ---------------------------------------------------------------------------
@@ -109,4 +113,43 @@ const bulkInternalRowSchema = Joi.object({
   }),
 }).options({ stripUnknown: true });
 
-module.exports = { manualEnrollmentSchema, adminInternalEnrollmentSchema, bulkInternalRowSchema };
+// ---------------------------------------------------------------------------
+// Step-1 draft schema — admin "+ New Enrollment" wizard.
+// Captures the student-identity fields after Step 1 so a half-finished
+// enrollment is still persisted as an unpaid lead in the Follow-Ups
+// pipeline. No plan / pricing / payment details yet - those come on
+// the final Step-3 submit which UPDATES the same enrollment in place.
+// ---------------------------------------------------------------------------
+const adminEnrollmentDraftSchema = Joi.object({
+  // Reusing the same regex / valid sets as the full internal schema so
+  // a draft row that gets upgraded to a final row never fails revalidation.
+  name: Joi.string().trim().min(2).max(100).pattern(NAME_REGEX).required()
+    .messages({ 'string.pattern.base': 'name must contain letters and spaces only' }),
+  email: Joi.string().email().lowercase().trim().max(255).pattern(EMAIL_REGEX).required()
+    .messages({ 'string.pattern.base': 'email must be a valid email address' }),
+  phone: Joi.string().pattern(INDIAN_MOBILE_REGEX).required().messages({
+    'string.pattern.base':
+      'phone must be a 10-digit Indian mobile number starting with 6, 7, 8, or 9',
+  }),
+  role: Joi.string()
+    .valid('STUDENT', 'FRESH_GRADUATE', 'WORKING_PROFESSIONAL', 'CAREER_SWITCHER').required(),
+  education: Joi.string()
+    .valid('SCHOOL', 'JR_COLLEGE', 'UNDERGRADUATE', 'GRADUATE', 'POST_GRADUATE', 'DOCTORATE', 'OTHER')
+    .optional().allow(null, ''),
+  readiness: Joi.string()
+    .valid('BEGINNER', 'INTERMEDIATE', 'READY_FOR_INTERVIEW').optional().allow(null, ''),
+  source: Joi.string()
+    .valid('SOCIAL_MEDIA', 'COLLEGE', 'FRIEND', 'GOOGLE', 'OTHER').optional().allow(null, ''),
+  notes: Joi.string().max(500).optional().allow(null, ''),
+  // Echo back from prior draft response so the same record is upserted
+  // when the admin goes back+forward through the wizard instead of
+  // creating a new draft on every step transition.
+  draftEnrollmentId: Joi.string().uuid().optional(),
+}).options({ stripUnknown: true });
+
+module.exports = {
+  manualEnrollmentSchema,
+  adminInternalEnrollmentSchema,
+  bulkInternalRowSchema,
+  adminEnrollmentDraftSchema,
+};
