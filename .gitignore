@@ -9,3 +9,6 @@ build/
 coverage/
 .DS_Store
 *.pem
+
+# Uploaded assets (branding logo, etc.)
+uploads/

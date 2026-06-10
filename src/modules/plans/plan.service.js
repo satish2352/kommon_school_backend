@@ -155,12 +155,23 @@ async function create(body, traceId) {
       // (Joi only checks each row in isolation — duplicates in the same array
       // would otherwise fail with a generic Prisma P2002 at insert time).
       const seen = new Set();
+      // Same idea for the duration identity: a duration value is only a
+      // duplicate when its UNIT also matches, so "2 Days" and "2 Months" are
+      // both allowed but two "2 Months" rows are rejected with a clean 409.
+      const seenDurations = new Set();
       for (const p of pricingRows) {
         const id = String(p.externalPlanId).trim();
         if (seen.has(id)) {
           throw ApiError.conflict(`Duplicate Plan ID "${id}" within the same plan`, 'EXTERNAL_PLAN_ID_DUPLICATE');
         }
         seen.add(id);
+
+        const durKey = `${p.durationMonths}-${(p.durationUnit || 'MONTHS').toUpperCase()}`;
+        if (seenDurations.has(durKey)) {
+          const unitLabel = (p.durationUnit || 'MONTHS').toUpperCase() === 'DAYS' ? 'days' : 'months';
+          throw ApiError.conflict(`Duplicate duration "${p.durationMonths} ${unitLabel}" within the same plan`, 'PRICING_DURATION_DUPLICATE');
+        }
+        seenDurations.add(durKey);
       }
       await tx.planPricing.createMany({
         data: pricingRows.map((p) => {
@@ -286,6 +297,7 @@ async function upsertPricing(planId, durationMonths, body, traceId) {
   // Ensure plan exists
   await getById(planId, traceId);
 
+  const durationUnit = (body.durationUnit || 'MONTHS').toUpperCase();
   const base = Number(body.basePrice);
   const discount = body.discountPercent != null ? Number(body.discountPercent) : 0;
   const computed = Math.round(base * (1 - discount / 100) * 100) / 100;
@@ -293,23 +305,26 @@ async function upsertPricing(planId, durationMonths, body, traceId) {
 
   // Pre-flight collision check — Prisma P2002 has a generic shape; we want
   // a clean 409 with the colliding pricing's identity for the admin UI.
+  // Exclude THIS row by its full (plan, duration value, unit) identity so an
+  // upsert of an existing row doesn't flag itself.
   const db = getPrismaClient();
   const collision = await db.planPricing.findFirst({
     where: {
       externalPlanId,
-      NOT: { AND: [{ planId }, { durationMonths }] },
+      NOT: { AND: [{ planId }, { durationMonths }, { durationUnit }] },
     },
-    select: { id: true, planId: true, durationMonths: true },
+    select: { id: true, planId: true, durationMonths: true, durationUnit: true },
   });
   if (collision) {
     throw ApiError.conflict(
-      `Plan ID "${externalPlanId}" is already used by plan ${collision.planId} (${collision.durationMonths} months)`,
+      `Plan ID "${externalPlanId}" is already used by plan ${collision.planId} (${collision.durationMonths} ${collision.durationUnit === 'DAYS' ? 'days' : 'months'})`,
       'EXTERNAL_PLAN_ID_TAKEN',
     );
   }
 
+  // durationUnit is part of the unique key, so it's passed as an explicit
+  // argument rather than in `data` (which only carries mutable fields).
   const data = {
-    durationUnit:    body.durationUnit || 'MONTHS',
     basePrice:       base,
     discountPercent: discount,
     finalPrice:      computed,
@@ -318,8 +333,8 @@ async function upsertPricing(planId, durationMonths, body, traceId) {
     status:          body.status || 'ACTIVE',
   };
 
-  const pricing = await repo.upsertPricing(planId, durationMonths, data);
-  logger.info({ msg: 'plan_pricing_upserted', traceId, plan_id: planId, duration_months: durationMonths });
+  const pricing = await repo.upsertPricing(planId, durationMonths, durationUnit, data);
+  logger.info({ msg: 'plan_pricing_upserted', traceId, plan_id: planId, duration_months: durationMonths, duration_unit: durationUnit });
   return pricing;
 }
 

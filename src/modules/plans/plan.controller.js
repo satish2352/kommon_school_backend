@@ -103,7 +103,8 @@ const remove = asyncHandler(async (req, res) => {
 
 const upsertPricing = asyncHandler(async (req, res) => {
   const planId = parseInt(req.params.planId, 10);
-  const durationMonths = parseInt(req.params.durationMonths, 10);
+  // parseFloat (not parseInt) so fractional durations like 1.5 survive.
+  const durationMonths = parseFloat(req.params.durationMonths);
   const pricing = await planService.upsertPricing(planId, durationMonths, req.body, req.traceId);
   sendSuccess(res, HTTP.OK, pricing, 'Pricing upserted');
 });

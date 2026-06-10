@@ -11,10 +11,15 @@ const { HTTP } = require('../../config/constants');
 
 // ---------------------------------------------------------------------------
 // CSV template column definitions
+//
+// Only the student-identity fields live in the CSV — the Course + Internal Plan
+// (and therefore plan / unit / pricing) are chosen once in the upload UI and
+// applied to every row. So the template is just name, email, phone.
 // ---------------------------------------------------------------------------
-const CSV_HEADER = 'name,email,phone,role,education,readiness,source,promoCode,planTier,durationMonths,notes';
+const CSV_HEADER = 'name,email,phone';
 const CSV_EXAMPLE =
-  'Jane Doe,jane@example.com,9876543210,STUDENT,GRADUATE,BEGINNER,GOOGLE,NEW501,GOLD,3,Admin created';
+  'Sumago Dev,sumagodev1@gmail.com,9876543210\n' +
+  'Jane Doe,jane@example.com,9123456780';
 
 /**
  * POST /api/v1/admin/enrollments/manual
@@ -57,15 +62,30 @@ const createInternal = asyncHandler(async (req, res) => {
  * Bulk-create enrollments from a CSV file (multipart/form-data).
  */
 const createBulk = asyncHandler(async (req, res) => {
+  const ApiError = require('../../utils/ApiError');
   if (!req.file) {
-    const ApiError = require('../../utils/ApiError');
     throw ApiError.badRequest('No CSV file uploaded. Use field name "file".');
   }
 
+  // The plan context (Course + Internal Plan picked in the UI) rides along as a
+  // JSON string field; every CSV row is enrolled into this plan.
+  let planContext = {};
+  if (req.body?.planContext) {
+    try {
+      planContext = JSON.parse(req.body.planContext);
+    } catch {
+      throw ApiError.badRequest('Invalid planContext — could not parse the selected plan.');
+    }
+  }
+
   const result = await createBulkEnrollments({
-    fileBuffer: req.file.buffer,
-    actor: req.user,
-    traceId: req.traceId,
+    fileBuffer:         req.file.buffer,
+    actor:              req.user,
+    traceId:            req.traceId,
+    req,
+    courseId:           planContext.courseId,
+    internalPlanId:     planContext.internalPlanId,
+    internalCouponCode: planContext.internalCouponCode || planContext.couponCode || null,
   });
 
   sendSuccess(res, HTTP.CREATED, result, 'Bulk enrollment processing complete');

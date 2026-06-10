@@ -24,6 +24,7 @@ const logger = require('../../config/logger');
 const env = require('../../config/env');
 const { sendOnboardingEmail } = require('../../../scripts/email');
 const emailLogRepo = require('../admin/emailLogs/emailLog.repository');
+const siteSettingsService = require('../siteSettings/siteSettings.service');
 
 // Unambiguous character sets (no O/0, I/l/1) so a temp password read off an
 // email is easy to type correctly.
@@ -87,6 +88,14 @@ function maskEmail(email) {
  * @returns {Promise<{sent:boolean, skipped?:boolean, messageId?:string, error?:string}>}
  */
 async function sendOnboardingAndLog({ to, name, tempPassword, enrollmentCode, enrollmentId, userId, traceId, triggeredBy }) {
+  // Dynamic brand name from site settings (best-effort: fall back silently so a
+  // settings hiccup never blocks onboarding email).
+  let brandName = 'Kommon School';
+  try {
+    const settings = await siteSettingsService.getSettings();
+    if (settings?.brandName) brandName = settings.brandName;
+  } catch { /* keep default brand name */ }
+
   const result = await sendOnboardingEmail({
     to,
     name,
@@ -94,6 +103,7 @@ async function sendOnboardingAndLog({ to, name, tempPassword, enrollmentCode, en
     tempPassword,
     loginUrl: env.FRONTEND_LOGIN_URL,
     enrollmentCode: enrollmentCode || null,
+    brandName,
     traceId,
   });
 
@@ -103,7 +113,7 @@ async function sendOnboardingAndLog({ to, name, tempPassword, enrollmentCode, en
     status: result.sent ? 'sent' : (result.skipped ? 'skipped' : 'failed'),
     messageId: result.messageId ?? null,
     error: result.error ?? null,
-    subject: 'Your Kommon School account',
+    subject: `Your ${brandName} account`,
     reason: result.skipped ? 'mail disabled or not configured' : null,
     enrollmentId: enrollmentId ?? null,
     userId: userId ?? null,
