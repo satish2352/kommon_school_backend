@@ -8,8 +8,13 @@ const { getPrismaClient } = require('../../config/database');
 const { ERROR_CODES } = require('../../config/constants');
 const auditService = require('../audit/audit.service');
 
-// Terminal statuses — no further status transitions allowed once reached.
-const TERMINAL_STATUSES = ['payment_completed', 'followup_closed'];
+// Terminal statuses — no further status transitions, schedule changes, or
+// notes are allowed once a followup reaches one of these. The original two
+// (payment_completed, followup_closed) are legacy values from the early
+// payment-only workflow; 'converted' and 'closed' are the user-visible
+// terminal outcomes employees pick from the simplified status set. A lead
+// landing in any of these is considered "done" and goes read-only.
+const TERMINAL_STATUSES = ['payment_completed', 'followup_closed', 'converted', 'closed'];
 
 // Valid FollowupStatus values — must stay in sync with the Prisma enum.
 const FOLLOWUP_STATUSES = [
@@ -240,6 +245,25 @@ async function addNote({ followupId, authorId, body, metadata, traceId }) {
     throw new ApiError(404, ERROR_CODES.FOLLOWUP_NOT_FOUND, 'Followup not found');
   }
 
+  // Block notes on terminal followups. The lead is closed/converted — the
+  // UI hides the form too, but enforce server-side so the rule can't be
+  // bypassed by hitting the API directly. System-authored notes (e.g.
+  // status-change audit lines) are written through repo.appendNote
+  // directly and bypass this check by design.
+  if (TERMINAL_STATUSES.includes(followup.status)) {
+    logger.warn({
+      msg: 'followup_note_rejected_terminal',
+      traceId,
+      followup_id: followupId,
+      status: followup.status,
+    });
+    throw new ApiError(
+      409,
+      ERROR_CODES.FOLLOWUP_INVALID_TRANSITION,
+      `Cannot add notes to a followup in terminal state '${followup.status}'`,
+    );
+  }
+
   const note = await repo.appendNote({
     followup_id: followupId,
     author_id: authorId,
@@ -305,13 +329,59 @@ async function updateStatus({ followupId, newStatus, actorId, traceId, nextFollo
 
   const updated = await repo.updateFollowup(followupId, patch);
 
-  // Append a system note to record the status transition.
-  await repo.appendNote({
-    followup_id: followupId,
-    author_id: actorId,
-    body: `status changed: ${fromStatus} -> ${newStatus}`,
-    metadata: { kind: 'system', from: fromStatus, to: newStatus },
-  });
+  // Only log the status transition when status actually changed, so the
+  // timeline doesn't fill up with no-op "contacted -> contacted" lines
+  // when the caller only rescheduled.
+  if (fromStatus !== newStatus) {
+    await repo.appendNote({
+      followup_id: followupId,
+      author_id: actorId,
+      body: `status changed: ${fromStatus} -> ${newStatus}`,
+      metadata: { kind: 'system', from: fromStatus, to: newStatus },
+    });
+  }
+
+  // Schedule-change history. Every set / reschedule / clear gets a system
+  // note so the activity timeline preserves the full sequence of follow-up
+  // dates the employee has agreed with the lead. Format is locale-aware
+  // (IST) so the body reads naturally — metadata carries raw ISO for any
+  // future structured-render use.
+  if (nextFollowupDate !== undefined) {
+    const fromDate = followup.next_followup_date || null;
+    const toDate   = nextFollowupDate || null;
+    const fromTs   = fromDate ? new Date(fromDate).getTime() : null;
+    const toTs     = toDate   ? new Date(toDate).getTime()   : null;
+
+    if (fromTs !== toTs) {
+      const fmt = (d) =>
+        new Intl.DateTimeFormat('en-IN', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+          timeZone:  'Asia/Kolkata',
+        }).format(new Date(d));
+
+      let body;
+      if (!fromDate && toDate) {
+        body = `next follow-up scheduled: ${fmt(toDate)}`;
+      } else if (fromDate && !toDate) {
+        body = `next follow-up cleared (was: ${fmt(fromDate)})`;
+      } else {
+        body = `next follow-up rescheduled: ${fmt(fromDate)} -> ${fmt(toDate)}`;
+      }
+
+      await repo.appendNote({
+        followup_id: followupId,
+        author_id:   actorId,
+        body,
+        metadata: {
+          kind: 'system',
+          event: 'schedule_change',
+          from:  fromDate ? new Date(fromDate).toISOString() : null,
+          to:    toDate   ? new Date(toDate).toISOString()   : null,
+        },
+      });
+    }
+  }
 
   logger.info({
     msg: 'followup_status_updated',
