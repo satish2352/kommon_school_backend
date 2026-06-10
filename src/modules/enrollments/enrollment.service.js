@@ -5,6 +5,7 @@ const repo = require('./enrollment.repository');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../config/logger');
 const { findActivePromoCode } = require('../promoCodes/promoCode.service');
+const followupService = require('../followups/followup.service');
 const { parsePagination, buildMeta } = require('../../utils/pagination');
 const { getPrismaClient } = require('../../config/database');
 const {
@@ -338,6 +339,33 @@ async function createEnrollment(body, traceId) {
       maxWait: 5000,
     },
   );
+
+  // Ensure the lead surfaces in Follow-Ups immediately. Public website
+  // submissions are exactly the "unpaid lead" pattern this module is
+  // designed for - the student has registered but not yet paid. If they
+  // never come back, the follow-up team can chase them. Idempotent via
+  // findActiveForEnrollment, fire-and-forget so a Followup-creation
+  // glitch never breaks the public enrollment response.
+  //
+  // The status='new' default matches the simplified 5-status model. If
+  // the student pays later, payment-verify can choose to close out the
+  // followup; that's a separate flow.
+  if (result?.enrollment?.id) {
+    try {
+      await followupService.autoCreateFromDeadLetter({
+        enrollmentId: result.enrollment.id,
+        status:       'new',
+        traceId,
+      });
+    } catch (err) {
+      logger.warn({
+        msg:           'followup_auto_create_failed_public',
+        traceId,
+        enrollment_id: result.enrollment.id,
+        error:         err?.message || String(err),
+      });
+    }
+  }
 
   return result;
 }
