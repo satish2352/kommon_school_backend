@@ -164,6 +164,10 @@ async function getDashboard(userId, traceId) {
   const lost              = byFollowupStatus.lost              || 0;
   const closed            = (byFollowupStatus.closed || 0) + (byFollowupStatus.followup_closed || 0);
   const notInterested     = byFollowupStatus.not_interested    || 0;
+  // "Followed-up" = leads the employee has spoken to but not yet
+  // resolved either way. Maps to followup.status='contacted' in the DB
+  // (rendered as "Follow-up In Progress" in the UI).
+  const followedUp        = byFollowupStatus.contacted          || 0;
 
   // Conversion rate: counted vs assigned. Returned as a 0..1 float; the UI
   // formats as %. Guarded against div-by-zero.
@@ -202,6 +206,7 @@ async function getDashboard(userId, traceId) {
     metrics: {
       totalAssigned,
       newLeads,
+      followedUp,
       todaysFollowups,
       overdueFollowups,
       upcomingFollowups,

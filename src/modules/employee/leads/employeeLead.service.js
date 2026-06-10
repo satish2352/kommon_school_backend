@@ -81,15 +81,22 @@ async function listMyLeads(query, userId, traceId) {
     where.status = query.status.trim();
   }
 
-  // Follow-up status quick-filter — translates to a relation filter on
-  // the most recent followup. Empty / missing = no constraint.
+  // Follow-up status quick-filter. Special-case 'new' to mean "untouched"
+  // (no followup row exists) so the dashboard's New Leads tile lands the
+  // employee on the right list. Everything else is a relation filter on
+  // the followup's status.
   if (query.followupStatus && query.followupStatus.trim()) {
-    where.followups = {
-      some: {
-        status:     query.followupStatus.trim(),
-        deleted_at: null,
-      },
-    };
+    const fs = query.followupStatus.trim();
+    if (fs === 'new') {
+      where.followups = { none: { deleted_at: null } };
+    } else {
+      where.followups = {
+        some: {
+          status:     fs,
+          deleted_at: null,
+        },
+      };
+    }
   }
 
   // Search across student identity. <3 chars are silently dropped to keep
