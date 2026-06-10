@@ -148,12 +148,6 @@ async function getDashboard(userId, traceId) {
     byFollowupStatus[row.status] = row._count._all;
   }
 
-  // "New leads" = untouched + explicit followup.status='new'. Untouched is
-  // the difference between total assigned and total with a followup; explicit
-  // 'new' covers cases where the followup exists but the employee hasn't
-  // moved it off the default yet.
-  const untouched         = Math.max(0, totalAssigned - leadsWithFollowup);
-  const newLeads          = untouched + (byFollowupStatus.new || 0);
 
   // Lookups that the dashboard tiles render directly. Default everything
   // to 0 so the UI doesn't have to deal with `undefined`.
@@ -168,6 +162,21 @@ async function getDashboard(userId, traceId) {
   // resolved either way. Maps to followup.status='contacted' in the DB
   // (rendered as "Follow-up In Progress" in the UI).
   const followedUp        = byFollowupStatus.contacted          || 0;
+
+  // "New leads" = anything the employee has NOT yet acted on under the
+  // simplified 5-status model. That includes:
+  //   - leads with no followup row (truly untouched)
+  //   - leads with a followup whose status is one of the legacy values
+  //     (payment_pending, new, followup_scheduled, call_back_later,
+  //      invalid_number, no_response) — the employee hasn't recorded an
+  //     actual outcome yet, so the lead is still "new" from their POV.
+  //
+  // Formula: total assigned minus everything that has reached one of
+  // the 5 real outcome buckets. Guarded against negative drift.
+  const newLeads = Math.max(
+    0,
+    totalAssigned - (followedUp + interested + notInterested + converted + closed),
+  );
 
   // Conversion rate: counted vs assigned. Returned as a 0..1 float; the UI
   // formats as %. Guarded against div-by-zero.

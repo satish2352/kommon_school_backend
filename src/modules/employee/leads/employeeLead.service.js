@@ -81,14 +81,22 @@ async function listMyLeads(query, userId, traceId) {
     where.status = query.status.trim();
   }
 
-  // Follow-up status quick-filter. Special-case 'new' to mean "untouched"
-  // (no followup row exists) so the dashboard's New Leads tile lands the
-  // employee on the right list. Everything else is a relation filter on
-  // the followup's status.
+  // Follow-up status quick-filter.
+  //   'new' is special: per the simplified 5-status model, "new" means
+  //         the employee has not yet recorded an actionable outcome.
+  //         That covers leads with no followup row at all, AND leads
+  //         whose followup still sits at one of the legacy / default
+  //         statuses (payment_pending, new, followup_scheduled, etc.).
+  //         Matches the dashboard's newLeads count exactly.
+  //   any other value: relation filter on the followup's status.
   if (query.followupStatus && query.followupStatus.trim()) {
     const fs = query.followupStatus.trim();
     if (fs === 'new') {
-      where.followups = { none: { deleted_at: null } };
+      // Real-outcome statuses the employee can set via the simplified UI.
+      const realOutcomes = ['contacted', 'interested', 'not_interested', 'converted', 'closed'];
+      where.followups = {
+        none: { deleted_at: null, status: { in: realOutcomes } },
+      };
     } else {
       where.followups = {
         some: {
