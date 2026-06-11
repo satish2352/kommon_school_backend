@@ -179,4 +179,50 @@ async function deleteUser({ id, actor, req }) {
   return deleted;
 }
 
-module.exports = { createUser, listUsers, getUserById, updateUser, deleteUser };
+/**
+ * Reactivate a previously soft-deleted user (clears deleted_at).
+ *
+ * Symmetric counterpart to deleteUser — added so admins can toggle
+ * employee accounts on/off without losing the row's identity (id, email,
+ * audit trail, assigned leads). Idempotent: reactivating an already-active
+ * user is a no-op success, not an error, so the UI can call it freely
+ * from a "Activate" button without first reading the state.
+ *
+ * @param {{ id: string, actor: object, req: object }} opts
+ * @returns {Promise<object>} sanitized reactivated user
+ */
+async function reactivateUser({ id, actor, req }) {
+  const existing = await repo.findUserById(id);
+  if (!existing) {
+    throw ApiError.notFound('User not found');
+  }
+  // Already active? Return without changes — keeps the endpoint idempotent
+  // and avoids an extra audit row for a no-op click.
+  if (existing.deleted_at == null) {
+    return existing;
+  }
+
+  const reactivated = await repo.updateUser(id, { deleted_at: null });
+
+  logger.info({ msg: 'admin_user_reactivated', user_id: id });
+
+  await auditService.record({
+    actor,
+    action:     'user.reactivate',
+    entityType: 'user',
+    entityId:   id,
+    changes:    null,
+    req,
+  });
+
+  return reactivated;
+}
+
+module.exports = {
+  createUser,
+  listUsers,
+  getUserById,
+  updateUser,
+  deleteUser,
+  reactivateUser,
+};

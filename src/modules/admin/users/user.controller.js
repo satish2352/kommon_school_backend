@@ -60,4 +60,20 @@ const remove = asyncHandler(async (req, res) => {
   sendSuccess(res, HTTP.OK, user, 'User deleted');
 });
 
-module.exports = { create, list, getById, update, remove };
+/**
+ * POST /api/v1/admin/users/:id/reactivate
+ *
+ * Clears deleted_at on a previously soft-deleted user. Idempotent.
+ * Symmetric to the DELETE soft-delete so the Employees page can
+ * surface an Activate / Deactivate toggle without a separate code path.
+ */
+const reactivate = asyncHandler(async (req, res) => {
+  const user = await userService.reactivateUser({
+    id:    req.params.id,
+    actor: req.user,
+    req,
+  });
+  sendSuccess(res, HTTP.OK, user, 'User reactivated');
+});
+
+module.exports = { create, list, getById, update, remove, reactivate };

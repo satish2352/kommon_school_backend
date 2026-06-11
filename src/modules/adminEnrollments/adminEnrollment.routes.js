@@ -9,6 +9,7 @@ const { hasPermission } = require('../../middleware/rbac.middleware');
 const {
   manualEnrollmentSchema,
   adminInternalEnrollmentSchema,
+  adminEnrollmentDraftSchema,
 } = require('./adminEnrollment.validator');
 const { PERMISSIONS } = require('../../config/constants');
 
@@ -53,6 +54,18 @@ router.post(
   hasPermission(PERMISSIONS.ENROLLMENTS_MANUAL_CREATE),
   validate(adminInternalEnrollmentSchema, 'body'),
   controller.createInternal,
+);
+
+// ---------------------------------------------------------------------------
+// POST /draft — Step-1 only. Persists the captured student fields as an
+// unpaid lead so the record survives a tab close. Same permission as
+// /internal since it's the same wizard, just an earlier checkpoint.
+// ---------------------------------------------------------------------------
+router.post(
+  '/draft',
+  hasPermission(PERMISSIONS.ENROLLMENTS_MANUAL_CREATE),
+  validate(adminEnrollmentDraftSchema, 'body'),
+  controller.createDraft,
 );
 
 // ---------------------------------------------------------------------------

@@ -73,6 +73,15 @@ const listEnrollmentsQuerySchema = Joi.object({
   source:        Joi.string().valid('INTERNAL', 'EXTERNAL').optional(),
   sortBy:   Joi.string().valid('created_at', 'updated_at', 'email', 'status').default('created_at'),
   sortOrder: Joi.string().valid('asc', 'desc').default('desc'),
+  // Lead-ownership filter — Employee Portal Phase 2.
+  //   "me"          → resolves to the requesting user's id (employee portal shortcut)
+  //   "unassigned"  → assigned_to IS NULL
+  //   <UUID>        → specific employee's leads (admin assignment filter)
+  // Service maps "me" using req.user.id since the validator can't see it.
+  assignedTo: Joi.alternatives().try(
+    Joi.string().uuid(),
+    Joi.string().valid('me', 'unassigned'),
+  ).optional(),
 }).options({ stripUnknown: true });
 
 module.exports = { listEnrollmentsQuerySchema };

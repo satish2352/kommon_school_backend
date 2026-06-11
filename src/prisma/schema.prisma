@@ -15,6 +15,10 @@ enum Role {
   superadmin
   admin
   marketing
+  // Follow-up team member. Logs into the separate /employee portal (NOT
+  // /admin). Sees only leads explicitly assigned to them via
+  // Enrollment.assigned_to. Permissions are seeded under role_permissions.
+  employee
   // Public self-enrolled students. Holds NO admin permissions — can
   // authenticate but is locked out of every admin-console route.
   student
@@ -57,6 +61,8 @@ enum EmailStatus {
 }
 
 enum FollowupStatus {
+  // Original 8 values — preserved for backward compatibility with any
+  // existing followup rows. Do not remove or reorder.
   payment_pending
   call_back_later
   interested
@@ -65,6 +71,17 @@ enum FollowupStatus {
   followup_closed
   invalid_number
   no_response
+  // Employee-portal additions. The portal-facing status set is:
+  //   new, contacted, followup_scheduled, interested, not_interested,
+  //   payment_pending, payment_completed, converted, lost, closed.
+  // Existing values map naturally; `followup_closed` and `closed` are
+  // synonymous and either is accepted by the API (the UI displays "Closed").
+  new
+  contacted
+  followup_scheduled
+  converted
+  lost
+  closed
 }
 
 // Phase 3A: new enums for public enrollment form
@@ -179,6 +196,7 @@ model User {
   assigned_followups      Followup[]     @relation("AssignedFollowups")
   authored_followup_notes FollowupNote[] @relation("AuthoredFollowupNotes")
   audit_logs              AuditLog[]     @relation("ActorAuditLogs")
+  assigned_enrollments    Enrollment[]   @relation("AssignedEnrollments")
 
   @@index([email])
   @@map("users")
@@ -253,6 +271,14 @@ model Enrollment {
   // Third-party sync state — distinct from `status` so admin UI shows
   // payment lifecycle vs sync state separately. See ExternalSyncStatus enum.
   external_sync_status    ExternalSyncStatus?  @map("external_sync_status")
+
+  // Employee-portal ownership. Nullable FK to users.id — set when admin
+  // assigns this lead to a follow-up employee. ON DELETE SET NULL so a
+  // deleted employee doesn't cascade-delete their leads. The DB layer
+  // also has partial indexes on (assigned_to) and (assigned_to, status)
+  // for fast "my leads" queries — see migration 20260604000000.
+  assigned_to        String?     @db.Uuid
+  assignee           User?       @relation("AssignedEnrollments", fields: [assigned_to], references: [id], onDelete: SetNull)
 
   payments           Payment[]
   external_api_logs  ExternalApiLog[]

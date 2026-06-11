@@ -16,6 +16,15 @@ const ENROLLMENT_SELECT = {
   plan: true,
   amount: true,
   status: true,
+  // Lead-ownership snapshot (Phase 2). Eager-loaded so the admin
+  // Follow-Ups page can render the canonical Assignee column without
+  // a second per-row query. enrollment.assigned_to is the source of
+  // truth for "who owns this lead"; followup.assigned_to is legacy
+  // (dead-letter path) and only used as a fallback in the controller.
+  assigned_to: true,
+  assignee: {
+    select: { id: true, email: true, role: true },
+  },
 };
 
 /**
@@ -86,6 +95,12 @@ async function listFollowups({ skip, take, where, orderBy }) {
       include: {
         enrollment: {
           select: ENROLLMENT_SELECT,
+        },
+        // Eager-load the assignee (employee) so the admin Follow-ups page
+        // can render an Assignee column without per-row round-trips.
+        // Lightweight projection (id + email + role).
+        assignee: {
+          select: { id: true, email: true, role: true },
         },
       },
     }),

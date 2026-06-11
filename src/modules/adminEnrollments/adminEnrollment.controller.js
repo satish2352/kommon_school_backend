@@ -4,6 +4,7 @@ const {
   createManualEnrollment,
   createInternalEnrollment,
   createBulkEnrollments,
+  createDraftEnrollment,
 } = require('./adminEnrollment.service');
 const { sendSuccess } = require('../../utils/ApiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -103,4 +104,21 @@ const getCsvTemplate = asyncHandler(async (req, res) => {
   res.status(HTTP.OK).send(csv);
 });
 
-module.exports = { createManual, createInternal, createBulk, getCsvTemplate };
+/**
+ * POST /api/v1/admin/enrollments/draft
+ *
+ * Save Step-1 fields of the admin "+ New Enrollment" wizard. Persists
+ * the lead immediately as an unpaid follow-up candidate so closing the
+ * tab mid-wizard does not lose the captured info. Subsequent calls with
+ * the same draftEnrollmentId UPDATE the same row.
+ */
+const createDraft = asyncHandler(async (req, res) => {
+  const result = await createDraftEnrollment({
+    data:    req.body,
+    actor:   req.user,
+    traceId: req.traceId,
+  });
+  sendSuccess(res, HTTP.OK, result, 'Draft saved');
+});
+
+module.exports = { createManual, createInternal, createBulk, getCsvTemplate, createDraft };

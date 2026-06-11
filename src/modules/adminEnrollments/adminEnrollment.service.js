@@ -12,6 +12,7 @@ const { findActivePromoCodeWithRelations } = require('../promoCodes/promoCode.se
 const { runCouponValidation } = require('../internalPlans/internalPlan.service');
 const { enqueueExternalApiSync } = require('../../queues/externalApi.queue');
 const auditService = require('../audit/audit.service');
+const followupService = require('../followups/followup.service');
 
 // ---------------------------------------------------------------------------
 // CSV required column names (case-insensitive matching).
@@ -147,6 +148,108 @@ async function triggerKommonSchoolSync({ enrollmentId, paymentId, traceId }) {
     // Intentionally not awaited — admin response must not wait for external HTTP.
     syncEnrollmentInBackground({ enrollmentId, paymentId, traceId });
   }
+}
+
+// ---------------------------------------------------------------------------
+// createDraftEnrollment
+//
+// Persists the Step-1 fields of the admin "+ New Enrollment" wizard so
+// a half-finished enrollment is captured as an unpaid lead in the
+// Follow-Ups pipeline. If admin completes Step 3 later, the same row
+// gets upgraded (separate path); if they close the tab, the lead
+// stays here and an employee can follow it up.
+//
+// Behaviour:
+//   * No `draftEnrollmentId` in body  -> INSERT a fresh row with
+//                                       status='submitted',
+//                                       candidate_type='INTERNAL'.
+//   * `draftEnrollmentId` provided    -> UPDATE that row with the
+//                                       (potentially edited) Step-1
+//                                       fields. Admin going Back to
+//                                       Step 1 and clicking Next again
+//                                       refreshes the draft in place.
+//
+// Auto-creates a Followup row with status='new' so the lead surfaces
+// immediately in the admin Follow-Ups page. Idempotent - if a followup
+// already exists for the enrollment, no duplicate is created.
+// ---------------------------------------------------------------------------
+async function createDraftEnrollment({ data, actor, traceId }) {
+  const db = getPrismaClient();
+  const { first_name, last_name } = splitName(data.name);
+
+  const baseFields = {
+    name:         data.name.trim(),
+    first_name,
+    last_name,
+    email:        data.email.trim().toLowerCase(),
+    phone_number: data.phone.trim(),
+    user_role:    data.role,
+    education:    data.education || null,
+    readiness:    data.readiness || null,
+    source:       data.source    || null,
+  };
+
+  let enrollment;
+
+  if (data.draftEnrollmentId) {
+    // UPDATE path - admin came back to Step 1 mid-wizard. Only refresh
+    // the identity fields; do not touch status / plan / payment.
+    const existing = await db.enrollment.findFirst({
+      where: { id: data.draftEnrollmentId, deleted_at: null },
+      select: { id: true, status: true },
+    });
+    if (existing) {
+      enrollment = await db.enrollment.update({
+        where: { id: existing.id },
+        data:  baseFields,
+      });
+    }
+    // If the prior draftEnrollmentId doesn't resolve (manually deleted,
+    // race, etc.) we fall through to creating a fresh one below.
+  }
+
+  if (!enrollment) {
+    enrollment = await db.enrollment.create({
+      data: {
+        ...baseFields,
+        enrollment_code: generateEnrollmentCode(),
+        status:          'submitted',
+        candidate_type:  'INTERNAL',
+      },
+    });
+  }
+
+  // Surface the lead in Follow-Ups immediately. autoCreateFromDeadLetter
+  // is generic + idempotent (checks for an existing active row first).
+  // status='new' so the dashboard's New tile picks it up.
+  try {
+    await followupService.autoCreateFromDeadLetter({
+      enrollmentId: enrollment.id,
+      status:       'new',
+      traceId,
+    });
+  } catch (err) {
+    logger.warn({
+      msg:           'followup_auto_create_failed_draft',
+      traceId,
+      enrollment_id: enrollment.id,
+      error:         err?.message || String(err),
+    });
+  }
+
+  logger.info({
+    msg:             'admin_enrollment_draft_saved',
+    traceId,
+    enrollment_id:   enrollment.id,
+    actor_id:        actor?.id,
+    upgraded:        Boolean(data.draftEnrollmentId),
+  });
+
+  return {
+    enrollmentId:   enrollment.id,
+    enrollmentCode: enrollment.enrollment_code,
+    drafted:        true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +449,52 @@ async function createManualEnrollment({ data, actor, adminSource = 'MANUAL', tra
 async function createInternalEnrollment({ data, actor, adminSource = 'INTERNAL', traceId, req }) {
   const db = getPrismaClient();
   const toPaise = (rupees) => Math.round(Number(rupees) * 100);
+
+  // ---------------------------------------------------------------------------
+  // Step 0 (optional): discard the prior draft + its Follow-Up record.
+  //
+  // The admin "+ New Enrollment" wizard saves a draft on Step-1 -> 2 so
+  // an abandoned wizard still surfaces as an unpaid lead. When the
+  // wizard completes, the draft is superseded by this fully-paid
+  // enrollment, so we soft-delete the draft + close out its followup
+  // here to avoid duplicate rows for the same student.
+  //
+  // Fail-soft: a draft cleanup failure does NOT block enrollment
+  // creation (the final row is still the authoritative one).
+  // ---------------------------------------------------------------------------
+  if (data.draftEnrollmentId) {
+    try {
+      const draft = await db.enrollment.findFirst({
+        where:  { id: data.draftEnrollmentId, deleted_at: null, status: 'submitted' },
+        select: { id: true },
+      });
+      if (draft) {
+        await db.$transaction([
+          db.followup.updateMany({
+            where: { enrollment_id: draft.id, deleted_at: null },
+            data:  { deleted_at: new Date() },
+          }),
+          db.enrollment.update({
+            where: { id: draft.id },
+            data:  { deleted_at: new Date() },
+          }),
+        ]);
+        logger.info({
+          msg:             'admin_enrollment_draft_discarded',
+          traceId,
+          draft_id:        draft.id,
+          actor_id:        actor?.id,
+        });
+      }
+    } catch (err) {
+      logger.warn({
+        msg:               'admin_enrollment_draft_discard_failed',
+        traceId,
+        draft_id:          data.draftEnrollmentId,
+        error:             err?.message || String(err),
+      });
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Step 1: read-only validation BEFORE we open the tx, so a fast 4xx
@@ -783,4 +932,9 @@ async function createBulkEnrollments({ fileBuffer, actor, traceId, req, courseId
   };
 }
 
-module.exports = { createManualEnrollment, createInternalEnrollment, createBulkEnrollments };
+module.exports = {
+  createManualEnrollment,
+  createInternalEnrollment,
+  createBulkEnrollments,
+  createDraftEnrollment,
+};

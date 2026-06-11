@@ -1,6 +1,8 @@
 {
+  "env": {
+    "CLAUDE_AGENT_MEMORY_DIR": ".claude/agent-memory"
+  },
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "allow": [
       "Read(**)",
       "Write(**)",
@@ -8,10 +10,12 @@
       "Glob(**)",
       "Grep(**)",
       "Bash(**)",
-      "Task(**)"
+      "Task(**)",
+      "Bash(curl -s -X POST http://localhost:3000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"admin@kommonschool.com\",\"password\":\"Admin@123456\"}' > /tmp/admin_login.json && cat /tmp/admin_login.json)"
+    ],
+    "defaultMode": "bypassPermissions",
+    "additionalDirectories": [
+      "\\tmp"
     ]
-  },
-  "env": {
-    "CLAUDE_AGENT_MEMORY_DIR": ".claude/agent-memory"
   }
 }

@@ -23,5 +23,8 @@ router.get('/', validate(listUsersQuerySchema, 'query'), controller.list);
 router.get('/:id', validate(idParamSchema, 'params'), controller.getById);
 router.patch('/:id', validate(idParamSchema, 'params'), validate(updateUserSchema, 'body'), controller.update);
 router.delete('/:id', validate(idParamSchema, 'params'), controller.remove);
+// Reactivate a soft-deleted user. Sibling to DELETE — pair them so the
+// admin UI can toggle Active/Inactive without writing two flows.
+router.post('/:id/reactivate', validate(idParamSchema, 'params'), controller.reactivate);
 
 module.exports = router;

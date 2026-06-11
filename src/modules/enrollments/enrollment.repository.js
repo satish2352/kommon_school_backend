@@ -151,7 +151,21 @@ async function findEnrollmentById(id) {
 async function listEnrollments({ skip, take, where, orderBy, countTtlMs }) {
   const db = getDb();
   const [rows, total] = await Promise.all([
-    db.enrollment.findMany({ skip, take, where, orderBy }),
+    db.enrollment.findMany({
+      skip,
+      take,
+      where,
+      orderBy,
+      // Eager-load the assignee for the Assignee column on the admin list.
+      // Lightweight (id + email + role only) so payload size stays bounded.
+      // assignee is nullable — `select` returns it as null when assigned_to
+      // is NULL, which the frontend renders as "Unassigned".
+      include: {
+        assignee: {
+          select: { id: true, email: true, role: true },
+        },
+      },
+    }),
     countCache.getCount(
       ENROLLMENT_COUNT_NAMESPACE,
       where,

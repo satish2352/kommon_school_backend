@@ -305,6 +305,34 @@ async function verifyPayment(body, traceId) {
     });
 
     if (!result.alreadySettled) {
+      // Close out any active follow-up record for this enrollment.
+      // Public-flow enrollments get a Followup row created the moment
+      // the student submits the form (see enrollment.service); once
+      // they pay, the lead is "Converted" so we transition the followup
+      // to that terminal status. Fail-soft - a followup-update glitch
+      // never blocks the payment-verify response.
+      try {
+        const db = getPrismaClient();
+        await db.followup.updateMany({
+          where: {
+            enrollment_id: payment.enrollment_id,
+            deleted_at:    null,
+            status:        { notIn: ['payment_completed', 'followup_closed', 'converted', 'lost', 'closed'] },
+          },
+          data: {
+            status:    'converted',
+            closed_at: new Date(),
+          },
+        });
+      } catch (followupErr) {
+        logger.warn({
+          msg:           'followup_close_on_payment_failed',
+          traceId,
+          enrollment_id: payment.enrollment_id,
+          error:         followupErr?.message || String(followupErr),
+        });
+      }
+
       // settlePayment() already set enrollment.status='paid' AND
       // external_sync_status='PENDING' inside the verify transaction, so
       // there's nothing more to mutate before enqueuing — the worker
