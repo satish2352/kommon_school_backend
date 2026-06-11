@@ -120,6 +120,16 @@ async function updatePricingStatus(pricingId, status) {
 }
 
 /**
+ * Hard-delete a PlanPricing row by PK. Caller must ensure no enrollment
+ * references it (FK constraint would otherwise reject the delete).
+ * @param {number} pricingId
+ * @returns {Promise<object>}
+ */
+async function deletePricing(pricingId) {
+  return getDb().planPricing.delete({ where: { id: pricingId } });
+}
+
+/**
  * Find a PlanPricing by PK where status = ACTIVE.
  * @param {number} pricingId
  * @returns {Promise<object|null>}
@@ -212,6 +222,7 @@ module.exports = {
   findPricingByPlanAndDuration,
   upsertPricing,
   updatePricingStatus,
+  deletePricing,
   findActivePricingById,
   countEnrollmentsByPlanId,
   countEnrollmentsByPricingId,

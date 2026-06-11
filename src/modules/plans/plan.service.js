@@ -343,8 +343,10 @@ async function upsertPricing(planId, durationMonths, body, traceId) {
 // ---------------------------------------------------------------------------
 
 /**
- * Deactivate (not hard-delete) a PlanPricing. Hard-delete is skipped if
- * any enrollment references this pricing.
+ * Remove a PlanPricing. Hard-deletes the row when nothing references it so it
+ * disappears from the admin pricing matrix entirely. If any enrollment
+ * references the pricing, a hard-delete would break historical integrity, so we
+ * fall back to a soft deactivate (status → INACTIVE) instead.
  * @param {number} planId
  * @param {number} pricingId
  * @param {string} traceId
@@ -362,8 +364,17 @@ async function deactivatePricing(planId, pricingId, traceId) {
     throw ApiError.notFound('Plan pricing does not belong to this plan');
   }
 
+  const enrollmentCount = await repo.countEnrollmentsByPricingId(pricingId);
+  if (enrollmentCount === 0) {
+    await repo.deletePricing(pricingId);
+    logger.info({ msg: 'plan_pricing_deleted', traceId, pricing_id: pricingId });
+    return { id: pricingId, deleted: true };
+  }
+
   const updated = await repo.updatePricingStatus(pricingId, 'INACTIVE');
-  logger.info({ msg: 'plan_pricing_deactivated', traceId, pricing_id: pricingId });
+  logger.info({
+    msg: 'plan_pricing_deactivated', traceId, pricing_id: pricingId, enrollment_count: enrollmentCount,
+  });
   return updated;
 }
 
