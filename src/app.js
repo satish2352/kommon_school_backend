@@ -46,6 +46,8 @@ const adminEnrollmentManualRoutes = require('./modules/adminEnrollments/adminEnr
 const internalPlansRoutes = require('./modules/internalPlans/internalPlan.routes');
 const courseNameRoutes = require('./modules/courseNameMaster/courseName.routes');
 const siteSettingsRoutes = require('./modules/siteSettings/siteSettings.routes');
+const contactPublicRoutes = require('./modules/contact/contact.public.routes');
+const contactAdminRoutes = require('./modules/contact/contact.admin.routes');
 
 const app = express();
 
@@ -165,6 +167,8 @@ app.use('/api/v1/admin/internal-plans', internalPlansRoutes);
 // Course Name Master CRUD
 app.use('/api/v1/admin/course-names', courseNameRoutes);
 app.use('/api/v1/settings', siteSettingsRoutes);
+app.use('/api/v1/contact', contactPublicRoutes);
+app.use('/api/v1/admin/contact-messages', contactAdminRoutes);
 
 app.use((req, res) => {
   return sendError(

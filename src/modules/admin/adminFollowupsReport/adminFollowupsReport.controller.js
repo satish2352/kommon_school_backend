@@ -1,6 +1,7 @@
 'use strict';
 
 const followupRepo = require('../../followups/followup.repository');
+const contactService = require('../../contact/contact.service');
 const { sendSuccess } = require('../../../utils/ApiResponse');
 const asyncHandler = require('../../../utils/asyncHandler');
 const { HTTP } = require('../../../config/constants');
@@ -17,8 +18,17 @@ const logger = require('../../../config/logger');
  * @param {object} r
  * @returns {object}
  */
-function toFollowupItem(r) {
+function toFollowupItem(r, contactByEmail = new Map()) {
   const enrollment = pickEnrollmentSummary(r.enrollment);
+  // A lead originates from the public website when a contact submission exists
+  // for its email (that table is only populated by the "Send Us a Message"
+  // form). Otherwise it came from the enrollment flow. The website enquiry's
+  // message becomes the description; enrollment leads fall back to the
+  // follow-up's own reason.
+  const email = (r.enrollment?.email || '').toLowerCase();
+  const contactMessage = email ? contactByEmail.get(email) : null;
+  const type = contactMessage != null ? 'website' : 'enrollment';
+  const description = contactMessage ?? r.reason ?? null;
   // Lead ownership resolves in this priority:
   //   1. enrollment.assigned_to (canonical source - Phase 2 onwards)
   //   2. followup.assigned_to   (legacy dead-letter path; pre-Phase 2 rows)
@@ -42,6 +52,10 @@ function toFollowupItem(r) {
       ? { id: ownerUser.id, email: ownerUser.email, role: ownerUser.role }
       : null,
     reason:        r.reason       || null,
+    // Origin of the lead — 'website' (contact form) or 'enrollment'.
+    type,
+    // Human description: the website message, else the follow-up reason.
+    description,
     createdAt:     r.created_at,
     updatedAt:     r.updated_at,
   };
@@ -112,10 +126,21 @@ const listReport = asyncHandler(async (req, res) => {
     orderBy: { created_at: 'desc' },
   });
 
+  // Enrich with website-origin detection + description. One batched query over
+  // the page's emails maps each to its latest contact message (if any).
+  const emails = rows.map((r) => r.enrollment?.email).filter(Boolean);
+  const contactByEmail = new Map();
+  try {
+    const contacts = await contactService.findLatestMessagesByEmails(emails);
+    for (const c of contacts) contactByEmail.set(String(c.email).toLowerCase(), c.message);
+  } catch (err) {
+    logger.warn({ msg: 'followups_contact_enrich_failed', error: err?.message || String(err) });
+  }
+
   logger.info({ msg: 'admin_followups_report_listed', total, page, limit });
 
   sendSuccess(res, HTTP.OK, {
-    items:      rows.map(toFollowupItem),
+    items:      rows.map((r) => toFollowupItem(r, contactByEmail)),
     total,
     page,
     limit,

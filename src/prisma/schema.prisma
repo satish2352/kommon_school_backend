@@ -719,3 +719,34 @@ model SiteSetting {
 
   @@map("site_settings")
 }
+
+// Lifecycle of a public "Send Us a Message" contact-form submission.
+enum ContactSubmissionStatus {
+  NEW
+  READ
+  REPLIED
+  SPAM
+  ARCHIVED
+}
+
+// Public website "Get in Touch" enquiries. The table already exists in the
+// database (migration 20260611000000_add_contact_submissions); this model maps
+// onto it so the API can read/write it. Field names mirror the snake_case
+// columns, so no @map is needed.
+model ContactSubmission {
+  id          String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String                  @db.VarChar(255)
+  email       String                  @db.VarChar(255)
+  phone       String?                 @db.VarChar(20)
+  message     String                  @db.Text
+  status      ContactSubmissionStatus @default(NEW)
+  admin_notes String?                 @db.Text
+  ip_address  String?
+  user_agent  String?
+  created_at  DateTime                @default(now()) @db.Timestamptz
+  updated_at  DateTime                @updatedAt @db.Timestamptz
+
+  @@map("contact_submissions")
+  @@index([status])
+  @@index([created_at])
+}
